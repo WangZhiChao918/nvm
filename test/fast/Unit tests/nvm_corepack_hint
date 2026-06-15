@@ -1,0 +1,78 @@
+#!/bin/sh
+
+die () { echo "$@" ; cleanup ; exit 1; }
+
+contains () {
+  # contains <needle> <haystack>
+  case "$2" in
+    *"$1"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+TMP="tmp_nvm_corepack_hint"
+
+write_pkg () {
+  # write_pkg <dir> <packageManager-value-or-empty>
+  mkdir -p "${TMP}/$1"
+  if [ -n "$2" ]; then
+    printf '{\n  "name": "fixture",\n  "packageManager": "%s"\n}\n' "$2" > "${TMP}/$1/package.json"
+  else
+    printf '{\n  "name": "fixture"\n}\n' > "${TMP}/$1/package.json"
+  fi
+}
+
+cleanup () {
+  rm -rf "${TMP}"
+}
+
+setup () {
+  cleanup
+  write_pkg 'pnpm' 'pnpm@8.15.0'
+  write_pkg 'pnpm-hash' 'pnpm@8.15.0+sha224.abc123'
+  write_pkg 'yarn' 'yarn@3.6.4'
+  write_pkg 'npm' 'npm@10.2.0'
+  write_pkg 'none' ''
+}
+
+: nvm.sh
+\. ../../../nvm.sh
+
+setup
+
+TEST_DIR="$PWD"
+
+# pnpm: hint names the pinned string, the corepack command, and the version check
+ACTUAL="$(PWD="$TEST_DIR/$TMP/pnpm" nvm_corepack_hint)"
+contains 'pnpm@8.15.0' "${ACTUAL}" || die "pnpm: expected pinned string in: ${ACTUAL}"
+contains 'corepack enable' "${ACTUAL}" || die "pnpm: expected corepack enable in: ${ACTUAL}"
+contains 'pnpm --version' "${ACTUAL}" || die "pnpm: expected version check in: ${ACTUAL}"
+
+# pnpm with an integrity hash: the version-check command still uses the bare name
+ACTUAL="$(PWD="$TEST_DIR/$TMP/pnpm-hash" nvm_corepack_hint)"
+contains 'pnpm@8.15.0+sha224.abc123' "${ACTUAL}" || die "pnpm-hash: expected full pinned string in: ${ACTUAL}"
+contains 'pnpm --version' "${ACTUAL}" || die "pnpm-hash: expected bare-name version check in: ${ACTUAL}"
+
+# yarn
+ACTUAL="$(PWD="$TEST_DIR/$TMP/yarn" nvm_corepack_hint)"
+contains 'yarn@3.6.4' "${ACTUAL}" || die "yarn: expected pinned string in: ${ACTUAL}"
+contains 'yarn --version' "${ACTUAL}" || die "yarn: expected version check in: ${ACTUAL}"
+
+# npm
+ACTUAL="$(PWD="$TEST_DIR/$TMP/npm" nvm_corepack_hint)"
+contains 'npm@10.2.0' "${ACTUAL}" || die "npm: expected pinned string in: ${ACTUAL}"
+contains 'npm --version' "${ACTUAL}" || die "npm: expected version check in: ${ACTUAL}"
+
+# no packageManager field: stay completely quiet
+ACTUAL="$(PWD="$TEST_DIR/$TMP/none" nvm_corepack_hint)"
+[ -z "${ACTUAL}" ] || die "none: expected no output, got: ${ACTUAL}"
+
+# opt-out via NVM_NO_COREPACK_HINT suppresses the hint even when a field exists
+ACTUAL="$(PWD="$TEST_DIR/$TMP/pnpm" NVM_NO_COREPACK_HINT=1 nvm_corepack_hint)"
+[ -z "${ACTUAL}" ] || die "opt-out: expected no output, got: ${ACTUAL}"
+
+# --silent (NVM_SILENT=1) suppresses the hint as well
+ACTUAL="$(PWD="$TEST_DIR/$TMP/pnpm" NVM_SILENT=1 nvm_corepack_hint)"
+[ -z "${ACTUAL}" ] || die "silent: expected no output, got: ${ACTUAL}"
+
+cleanup

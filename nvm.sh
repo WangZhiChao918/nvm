@@ -530,6 +530,58 @@ nvm_find_nvmrc() {
   fi
 }
 
+nvm_find_package_json() {
+  local dir
+  dir="$(nvm_find_up 'package.json')"
+  if [ -e "${dir}/package.json" ]; then
+    nvm_echo "${dir}/package.json"
+  fi
+}
+
+# Print an advisory hint (this never modifies the environment) when the nearest
+# package.json declares a "packageManager" field. Front-end projects commonly
+# pin pnpm/yarn/npm there and expect Corepack to provide it, so after installing
+# or switching Node we remind the user to either enable Corepack or confirm the
+# package manager version themselves. Honors NVM_SILENT and can be turned off
+# entirely by setting NVM_NO_COREPACK_HINT to any non-empty value.
+nvm_corepack_hint() {
+  if [ "${NVM_SILENT:-0}" -eq 1 ]; then
+    return 0
+  fi
+  if [ -n "${NVM_NO_COREPACK_HINT-}" ]; then
+    return 0
+  fi
+
+  local NVM_PACKAGE_JSON
+  NVM_PACKAGE_JSON="$(nvm_find_package_json)"
+  if [ -z "${NVM_PACKAGE_JSON}" ] || [ ! -e "${NVM_PACKAGE_JSON}" ]; then
+    return 0
+  fi
+
+  local NVM_PACKAGE_MANAGER
+  NVM_PACKAGE_MANAGER="$(nvm_grep '"packageManager"' "${NVM_PACKAGE_JSON}" 2>/dev/null \
+    | command head -n 1 \
+    | command sed 's/.*"packageManager"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+
+  # No field, or a match we could not extract a quoted value from: stay quiet.
+  if [ -z "${NVM_PACKAGE_MANAGER}" ]; then
+    return 0
+  fi
+  case "${NVM_PACKAGE_MANAGER}" in
+    *'"packageManager"'*) return 0 ;;
+  esac
+
+  local NVM_PM_NAME
+  NVM_PM_NAME="${NVM_PACKAGE_MANAGER%%@*}"
+  if [ -z "${NVM_PM_NAME}" ]; then
+    return 0
+  fi
+
+  nvm_echo "Note: this project's package.json pins a package manager (\"${NVM_PACKAGE_MANAGER}\")."
+  nvm_echo "  nvm will not change this for you. To use it, enable Corepack: 'corepack enable'"
+  nvm_echo "  or confirm your installed version: '${NVM_PM_NAME} --version'"
+}
+
 nvm_nvmrc_invalid_msg() {
   local error_text
   error_text="invalid .nvmrc!
@@ -4136,6 +4188,7 @@ nvm() {
       if [ -n "${NVM_USE_OUTPUT-}" ] && [ "${NVM_SILENT:-0}" -ne 1 ]; then
         nvm_echo "${NVM_USE_OUTPUT}"
       fi
+      nvm_corepack_hint
     ;;
     "run")
       local provided_version
@@ -4689,7 +4742,8 @@ nvm() {
         nvm_normalize_version nvm_is_valid_version nvm_normalize_lts \
         nvm_ensure_version_installed nvm_cache_dir nvm_ls_cached nvm_offline_version \
         nvm_version_path nvm_alias_path nvm_version_dir \
-        nvm_find_nvmrc nvm_find_up nvm_find_project_dir nvm_tree_contains_path \
+        nvm_find_nvmrc nvm_find_package_json nvm_corepack_hint \
+        nvm_find_up nvm_find_project_dir nvm_tree_contains_path \
         nvm_version_greater nvm_version_greater_than_or_equal_to \
         nvm_print_npm_version nvm_install_latest_npm nvm_npm_global_modules \
         nvm_has_system_node nvm_has_system_iojs \

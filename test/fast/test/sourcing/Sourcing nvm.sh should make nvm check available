@@ -1,0 +1,40 @@
+#!/bin/sh
+
+die () { echo "$*" ; echo "|${NVM_DIR}|"; exit 1; }
+
+supports_source_options () {
+  [ "_$(echo 'echo $1' | . /dev/stdin yes)" = "_yes" ]
+}
+
+if ! supports_source_options; then
+  echo 'this shell does not support passing options on sourcing'
+  exit 0;
+fi
+
+echo '0.10.2' > .nvmrc || die 'creation of .nvmrc failed'
+
+export NVM_DIR="${PWD}/../.."
+
+\. ../../nvm.sh --no-use
+EXIT_CODE="$?"
+
+echo 'sourcing complete.'
+
+[ "_${EXIT_CODE}" = '_0' ] || die "sourcing returned nonzero exit code: ${EXIT_CODE}"
+
+# Verify nvm check is available as a function
+type nvm_check >/dev/null 2>&1 || die 'nvm_check function not available after sourcing'
+
+# Verify nvm check finds the .nvmrc and produces expected output structure
+set +e
+OUTPUT="$(nvm check 2>&1)"
+set -e
+
+echo "${OUTPUT}" | \grep -q '\.nvmrc' || die "nvm check did not mention .nvmrc, got >${OUTPUT}<"
+echo "${OUTPUT}" | \grep -q 'Expected:' || die "nvm check did not show Expected line, got >${OUTPUT}<"
+echo "${OUTPUT}" | \grep -q 'Current:' || die "nvm check did not show Current line, got >${OUTPUT}<"
+
+# Verify that nvm check mentions 0.10.2 (from .nvmrc)
+echo "${OUTPUT}" | \grep -q '0.10.2' || die "nvm check did not mention .nvmrc version 0.10.2, got >${OUTPUT}<"
+
+rm .nvmrc

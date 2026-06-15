@@ -1,0 +1,86 @@
+#!/bin/sh
+
+set -ex
+
+die () { echo "$@" ; cleanup ; exit 1; }
+
+cleanup() {
+  unset -f nvm_ls_current nvm_version
+  rm -f .nvmrc
+}
+
+: nvm.sh
+\. ../../nvm.sh
+
+# --- Test 1: No .nvmrc found ---
+rm -f .nvmrc
+set +x
+OUTPUT="$(nvm check 2>&1)" && EXIT_CODE=$? || EXIT_CODE=$?
+set -x
+[ "${EXIT_CODE}" -eq 1 ] || die "Expected exit code 1 when no .nvmrc, got ${EXIT_CODE}"
+echo "${OUTPUT}" | \grep -q 'No .nvmrc file found' || die "Expected 'No .nvmrc file found' message, got >${OUTPUT}<"
+
+# --- Test 2: .nvmrc matches current version ---
+echo 'v18.17.0' > .nvmrc
+nvm_ls_current() { echo 'v18.17.0'; }
+nvm_version() {
+  if [ "${1}" = 'current' ]; then
+    echo 'v18.17.0'
+  else
+    echo 'v18.17.0'
+  fi
+}
+set +x
+OUTPUT="$(nvm check 2>&1)" && EXIT_CODE=$? || EXIT_CODE=$?
+set -x
+[ "${EXIT_CODE}" -eq 0 ] || die "Expected exit code 0 when versions match, got ${EXIT_CODE}. Output: ${OUTPUT}"
+echo "${OUTPUT}" | \grep -q 'matches .nvmrc' || die "Expected 'matches .nvmrc' message, got >${OUTPUT}<"
+
+# --- Test 3: .nvmrc does NOT match current version ---
+echo 'v18.17.0' > .nvmrc
+nvm_ls_current() { echo 'v20.10.0'; }
+nvm_version() {
+  if [ "${1}" = 'current' ]; then
+    echo 'v20.10.0'
+  elif [ "${1}" = 'v18.17.0' ] || [ "${1}" = '18.17.0' ]; then
+    echo 'v18.17.0'
+  else
+    echo 'v18.17.0'
+  fi
+}
+set +x
+OUTPUT="$(nvm check 2>&1)" && EXIT_CODE=$? || EXIT_CODE=$?
+set -x
+[ "${EXIT_CODE}" -eq 1 ] || die "Expected exit code 1 when versions differ, got ${EXIT_CODE}. Output: ${OUTPUT}"
+echo "${OUTPUT}" | \grep -q 'Expected:' || die "Expected 'Expected:' line, got >${OUTPUT}<"
+echo "${OUTPUT}" | \grep -q 'Current:' || die "Expected 'Current:' line, got >${OUTPUT}<"
+echo "${OUTPUT}" | \grep -q 'nvm use' || die "Expected 'nvm use' suggestion, got >${OUTPUT}<"
+
+# --- Test 4: .nvmrc version not installed (N/A) ---
+echo 'v99.99.99' > .nvmrc
+nvm_ls_current() { echo 'v20.10.0'; }
+nvm_version() {
+  if [ "${1}" = 'current' ]; then
+    echo 'v20.10.0'
+  else
+    echo 'N/A'
+  fi
+}
+set +x
+OUTPUT="$(nvm check 2>&1)" && EXIT_CODE=$? || EXIT_CODE=$?
+set -x
+[ "${EXIT_CODE}" -eq 1 ] || die "Expected exit code 1 when version not installed, got ${EXIT_CODE}. Output: ${OUTPUT}"
+echo "${OUTPUT}" | \grep -q 'not installed' || die "Expected 'not installed' message, got >${OUTPUT}<"
+echo "${OUTPUT}" | \grep -q 'nvm install' || die "Expected 'nvm install' suggestion, got >${OUTPUT}<"
+
+# --- Test 5: --silent flag suppresses output on match ---
+echo 'v18.17.0' > .nvmrc
+nvm_ls_current() { echo 'v18.17.0'; }
+nvm_version() { echo 'v18.17.0'; }
+set +x
+OUTPUT="$(nvm check --silent 2>&1)" && EXIT_CODE=$? || EXIT_CODE=$?
+set -x
+[ "${EXIT_CODE}" -eq 0 ] || die "Expected exit code 0 for --silent match, got ${EXIT_CODE}. Output: ${OUTPUT}"
+[ -z "${OUTPUT}" ] || die "Expected empty output with --silent on match, got >${OUTPUT}<"
+
+cleanup

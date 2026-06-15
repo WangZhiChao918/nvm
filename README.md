@@ -695,6 +695,55 @@ You can use [`nvshim`](https://github.com/iamogbz/nvshim) to shim the `node`, `n
 
 If you prefer a lighter-weight solution, the recipes below have been contributed by `nvm` users. They are **not** supported by the `nvm` maintainers. We are, however, accepting pull requests for more examples.
 
+#### Checking the current Node version against `.nvmrc` without switching
+
+If you want to be *notified* when your active Node version does not match the one declared in `.nvmrc` — but do **not** want nvm to switch versions automatically — use the built-in `nvm check` subcommand.
+
+```sh
+nvm check
+```
+
+When run inside (or below) a directory containing a `.nvmrc` file, it prints the expected version, the currently active version, and the command to reconcile them:
+
+```
+nvm check: .nvmrc found at /home/dev/project/.nvmrc
+  Expected: v18.17.0 (from .nvmrc: 18.17.0)
+  Current:  v20.10.0
+  Run:      nvm use 18.17.0
+```
+
+If the versions already match, it exits with code 0 and prints a short confirmation. If the `.nvmrc` version is not installed, it suggests `nvm install` instead. The `--silent` flag suppresses output when versions match (useful in shell hooks).
+
+##### Using `nvm check` in a shell hook (bash)
+
+Add the following to your `$HOME/.bashrc` to print a version-mismatch notice every time you `cd` into a project:
+
+```bash
+cdnvm() {
+    command cd "$@" || return $?
+    nvm check >/dev/null 2>&1 && return
+    nvm check
+}
+
+alias cd='cdnvm'
+```
+
+##### Using `nvm check` in a shell hook (zsh)
+
+Add the following to your `$HOME/.zshrc` (after nvm initialization):
+
+```zsh
+autoload -U add-zsh-hook
+
+check-nvmrc() {
+  nvm check >/dev/null 2>&1 && return
+  nvm check
+}
+
+add-zsh-hook chpwd check-nvmrc
+check-nvmrc
+```
+
 #### Calling `nvm use` automatically in a directory with a `.nvmrc` file
 
 In your profile (`~/.bash_profile`, `~/.zshrc`, `~/.profile`, or `~/.bashrc`), add the following to `nvm use` whenever you enter a new directory:

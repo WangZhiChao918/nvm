@@ -3152,6 +3152,54 @@ nvm_offline_version() {
   return 3
 }
 
+nvm_check() {
+  local NVMRC_PATH
+  NVMRC_PATH="$(nvm_find_nvmrc)"
+
+  if [ ! -e "${NVMRC_PATH}" ]; then
+    nvm_err 'No .nvmrc file found in the current directory or any parent directory.'
+    return 1
+  fi
+
+  local EXPECTED_VERSION
+  if ! EXPECTED_VERSION="$(nvm_process_nvmrc "${NVMRC_PATH}" 2>/dev/null)"; then
+    nvm_err "Failed to parse .nvmrc at \"${NVMRC_PATH}\"."
+    return 1
+  fi
+
+  if [ -z "${EXPECTED_VERSION}" ]; then
+    nvm_err "Empty or invalid .nvmrc at \"${NVMRC_PATH}\"."
+    return 1
+  fi
+
+  local CURRENT_VERSION
+  CURRENT_VERSION="$(nvm_ls_current)"
+
+  local RESOLVED_EXPECTED
+  RESOLVED_EXPECTED="$(nvm_version "${EXPECTED_VERSION}" 2>/dev/null ||:)"
+
+  if [ "${RESOLVED_EXPECTED}" = 'N/A' ] || [ -z "${RESOLVED_EXPECTED}" ]; then
+    nvm_echo "nvm check: .nvmrc found at ${NVMRC_PATH}"
+    nvm_echo "  Expected: ${EXPECTED_VERSION} (not installed)"
+    nvm_echo "  Current:  ${CURRENT_VERSION}"
+    nvm_echo "  Run:      nvm install ${EXPECTED_VERSION}"
+    return 1
+  fi
+
+  if [ "_${CURRENT_VERSION}" = "_${RESOLVED_EXPECTED}" ]; then
+    if [ "${NVM_SILENT:-0}" -ne 1 ]; then
+      nvm_echo "nvm check: current node version matches .nvmrc (${CURRENT_VERSION})"
+    fi
+    return 0
+  fi
+
+  nvm_echo "nvm check: .nvmrc found at ${NVMRC_PATH}"
+  nvm_echo "  Expected: ${RESOLVED_EXPECTED} (from .nvmrc: ${EXPECTED_VERSION})"
+  nvm_echo "  Current:  ${CURRENT_VERSION}"
+  nvm_echo "  Run:      nvm use ${EXPECTED_VERSION}"
+  return 1
+}
+
 nvm() {
   if [ "$#" -lt 1 ]; then
     nvm --help
@@ -3256,6 +3304,8 @@ nvm() {
         nvm_echo '    --lts                                     Uses automatic LTS (long-term support) alias `lts/*`, if available.'
         nvm_echo '    --lts=<LTS name>                          Uses automatic alias for provided LTS line, if available.'
         nvm_echo '  nvm current                                 Display the active node version (resolved via $PATH; not affected by .nvmrc).'
+        nvm_echo '  nvm check                                   Compare the active node version against .nvmrc and suggest corrective commands.'
+        nvm_echo '    --silent                                  Silences stdout/stderr output'
         nvm_echo '  nvm ls [<version>]                          List installed versions, matching a given <version> if provided'
         nvm_echo '    --no-colors                               Suppress colored output'
         nvm_echo '    --no-alias                                Suppress `nvm alias` output'
@@ -4397,6 +4447,17 @@ nvm() {
     "current")
       nvm_version current
     ;;
+    "check")
+      local NVM_SILENT
+      while [ $# -ne 0 ]; do
+        case "${1}" in
+          --silent) NVM_SILENT=1 ;;
+          --) ;;
+        esac
+        shift
+      done
+      nvm_check
+    ;;
     "which")
       local NVM_SILENT
       local provided_version
@@ -4711,6 +4772,7 @@ nvm() {
         nvm_get_artifact_compression nvm_install_binary_extract nvm_extract_tarball \
         nvm_process_nvmrc nvm_nvmrc_invalid_msg \
         nvm_write_nvmrc \
+        nvm_check \
         >/dev/null 2>&1
       unset NVM_NODEJS_ORG_MIRROR NVM_IOJS_ORG_MIRROR NVM_DIR \
         NVM_CD_FLAGS NVM_BIN NVM_INC NVM_MAKE_JOBS \

@@ -211,6 +211,51 @@ nvm_print_npm_version() {
   fi
 }
 
+nvm_get_package_manager() {
+  local PROJECT_DIR
+  PROJECT_DIR="$(nvm_find_project_dir)"
+  if [ -z "${PROJECT_DIR}" ] || [ ! -f "${PROJECT_DIR}/package.json" ]; then
+    return
+  fi
+  local PKG_MANAGER
+  PKG_MANAGER="$(nvm_grep '"packageManager"' "${PROJECT_DIR}/package.json" 2>/dev/null | command sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  nvm_echo "${PKG_MANAGER}"
+}
+
+nvm_corepack_hint() {
+  local PKG_MANAGER
+  PKG_MANAGER="$(nvm_get_package_manager)"
+  if [ -z "${PKG_MANAGER}" ]; then
+    return
+  fi
+
+  local PM_NAME
+  local PM_VERSION
+  PM_NAME="$(nvm_echo "${PKG_MANAGER}" | command sed 's/@.*//')"
+  PM_VERSION="$(nvm_echo "${PKG_MANAGER}" | command sed 's/[^@]*@//')"
+
+  case "${PM_NAME}" in
+    npm)
+      nvm_echo "This project uses npm v${PM_VERSION} (via packageManager field in package.json)."
+      ;;
+    pnpm | yarn)
+      nvm_echo "This project uses ${PM_NAME}@${PM_VERSION} (defined in package.json packageManager field)."
+      if nvm_has "corepack"; then
+        if corepack enable 2>/dev/null; then
+          nvm_echo "Corepack is enabled. Run 'corepack prepare ${PM_NAME}@${PM_VERSION} --activate' to use the specified version."
+        else
+          nvm_echo "Hint: Corepack is available but not enabled. Run 'corepack enable' to use ${PM_NAME}@${PM_VERSION}."
+        fi
+      else
+        nvm_echo "Hint: Corepack is not available. Install it or use '${PM_NAME}' directly to match v${PM_VERSION}."
+      fi
+      ;;
+    *)
+      nvm_echo "This project specifies packageManager '${PKG_MANAGER}' in package.json."
+      ;;
+  esac
+}
+
 nvm_install_latest_npm() {
   nvm_echo 'Attempting to upgrade to the latest working version of npm...'
   local NODE_VERSION
@@ -4135,6 +4180,7 @@ nvm() {
       fi
       if [ -n "${NVM_USE_OUTPUT-}" ] && [ "${NVM_SILENT:-0}" -ne 1 ]; then
         nvm_echo "${NVM_USE_OUTPUT}"
+        nvm_corepack_hint
       fi
     ;;
     "run")
@@ -4691,7 +4737,8 @@ nvm() {
         nvm_version_path nvm_alias_path nvm_version_dir \
         nvm_find_nvmrc nvm_find_up nvm_find_project_dir nvm_tree_contains_path \
         nvm_version_greater nvm_version_greater_than_or_equal_to \
-        nvm_print_npm_version nvm_install_latest_npm nvm_npm_global_modules \
+        nvm_print_npm_version nvm_get_package_manager nvm_corepack_hint \
+        nvm_install_latest_npm nvm_npm_global_modules \
         nvm_has_system_node nvm_has_system_iojs \
         nvm_download nvm_get_latest nvm_has nvm_install_default_packages nvm_get_default_packages \
         nvm_curl_use_compression nvm_curl_version \

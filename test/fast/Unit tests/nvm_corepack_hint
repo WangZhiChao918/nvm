@@ -1,0 +1,99 @@
+#!/bin/sh
+
+cleanup() {
+  unset -f nvm_find_project_dir nvm_has corepack nvm_echo
+  rm -rf "${TEST_DIR_NPM}" "${TEST_DIR_PNPM}" "${TEST_DIR_YARN}" "${TEST_DIR_NONE}"
+}
+die() { echo "$@"; cleanup; exit 1; }
+
+: nvm.sh
+\. ../../../nvm.sh
+
+TEST_DIR_PNPM="$(mktemp -d 2>/dev/null || echo "/tmp/nvm_test_pnpm_$$")"
+TEST_DIR_YARN="$(mktemp -d 2>/dev/null || echo "/tmp/nvm_test_yarn_$$")"
+TEST_DIR_NPM="$(mktemp -d 2>/dev/null || echo "/tmp/nvm_test_npm_$$")"
+TEST_DIR_NONE="$(mktemp -d 2>/dev/null || echo "/tmp/nvm_test_none_$$")"
+
+mkdir -p "${TEST_DIR_PNPM}" "${TEST_DIR_YARN}" "${TEST_DIR_NPM}" "${TEST_DIR_NONE}"
+
+echo '{"name": "test-pnpm", "packageManager": "pnpm@8.6.0"}' > "${TEST_DIR_PNPM}/package.json"
+echo '{"name": "test-yarn", "packageManager": "yarn@3.6.0"}' > "${TEST_DIR_YARN}/package.json"
+echo '{"name": "test-npm", "packageManager": "npm@9.6.0"}' > "${TEST_DIR_NPM}/package.json"
+echo '{"name": "test-none"}' > "${TEST_DIR_NONE}/package.json"
+
+# Test 1: pnpm - corepack not enabled
+nvm_find_project_dir() { nvm_echo "${TEST_DIR_PNPM}"; }
+nvm_has() {
+  if [ "$1" = "corepack" ]; then return 1; fi
+  return 0
+}
+OUTPUT="$(nvm_corepack_hint)"
+echo "${OUTPUT}" | command grep -q 'pnpm@8.6.0' || die "Test 1 failed: Expected pnpm@8.6.0 in output, got: ${OUTPUT}"
+echo "${OUTPUT}" | command grep -q 'Corepack is not available' || die "Test 1 failed: Expected 'Corepack is not available' hint, got: ${OUTPUT}"
+
+# Test 2: yarn - corepack not enabled
+nvm_find_project_dir() { nvm_echo "${TEST_DIR_YARN}"; }
+nvm_has() {
+  if [ "$1" = "corepack" ]; then return 1; fi
+  return 0
+}
+OUTPUT="$(nvm_corepack_hint)"
+echo "${OUTPUT}" | command grep -q 'yarn@3.6.0' || die "Test 2 failed: Expected yarn@3.6.0 in output, got: ${OUTPUT}"
+echo "${OUTPUT}" | command grep -q 'Corepack is not available' || die "Test 2 failed: Expected 'Corepack is not available' hint, got: ${OUTPUT}"
+
+# Test 3: npm
+nvm_find_project_dir() { nvm_echo "${TEST_DIR_NPM}"; }
+nvm_has() { return 0; }
+OUTPUT="$(nvm_corepack_hint)"
+echo "${OUTPUT}" | command grep -q 'npm v9.6.0' || die "Test 3 failed: Expected 'npm v9.6.0' in output, got: ${OUTPUT}"
+if echo "${OUTPUT}" | command grep -q 'corepack'; then
+  die "Test 3 failed: npm should not mention corepack, got: ${OUTPUT}"
+fi
+
+# Test 4: No packageManager field
+nvm_find_project_dir() { nvm_echo "${TEST_DIR_NONE}"; }
+nvm_has() { return 0; }
+OUTPUT="$(nvm_corepack_hint)"
+if [ -n "${OUTPUT}" ]; then
+  die "Test 4 failed: Expected empty output for no packageManager, got: ${OUTPUT}"
+fi
+
+# Test 5: No package.json (project dir returns empty)
+nvm_find_project_dir() { echo ""; }
+nvm_has() { return 0; }
+OUTPUT="$(nvm_corepack_hint)"
+if [ -n "${OUTPUT}" ]; then
+  die "Test 5 failed: Expected empty output for no package.json, got: ${OUTPUT}"
+fi
+
+# Test 6: pnpm - corepack available but not enabled
+nvm_find_project_dir() { nvm_echo "${TEST_DIR_PNPM}"; }
+nvm_has() {
+  if [ "$1" = "corepack" ]; then return 0; fi
+  return 0
+}
+corepack() {
+  if [ "$1" = "enable" ]; then return 1; fi
+  if [ "$1" = "--version" ]; then echo "0.20.0"; fi
+  return 0
+}
+OUTPUT="$(nvm_corepack_hint)"
+echo "${OUTPUT}" | command grep -q 'pnpm@8.6.0' || die "Test 6 failed: Expected pnpm@8.6.0 in output, got: ${OUTPUT}"
+echo "${OUTPUT}" | command grep -q 'not enabled' || die "Test 6 failed: Expected 'not enabled' hint, got: ${OUTPUT}"
+
+# Test 7: yarn - corepack enabled
+nvm_find_project_dir() { nvm_echo "${TEST_DIR_YARN}"; }
+nvm_has() {
+  if [ "$1" = "corepack" ]; then return 0; fi
+  return 0
+}
+corepack() {
+  if [ "$1" = "enable" ]; then return 0; fi
+  if [ "$1" = "--version" ]; then echo "0.20.0"; fi
+  return 0
+}
+OUTPUT="$(nvm_corepack_hint)"
+echo "${OUTPUT}" | command grep -q 'yarn@3.6.0' || die "Test 7 failed: Expected yarn@3.6.0 in output, got: ${OUTPUT}"
+echo "${OUTPUT}" | command grep -q 'Corepack is enabled' || die "Test 7 failed: Expected 'Corepack is enabled' in output, got: ${OUTPUT}"
+
+cleanup

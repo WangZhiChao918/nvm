@@ -1,0 +1,40 @@
+#!/bin/sh
+
+die () { echo "$@" ; exit 1; }
+
+: nvm.sh
+\. ../../../nvm.sh
+
+assert_version() {
+  local INPUT
+  local EXPECTED
+  local OUTPUT
+  INPUT="$1"
+  EXPECTED="$2"
+  OUTPUT="$(nvm_engines_node_to_version "${INPUT}")"
+  [ "_${OUTPUT}" = "_${EXPECTED}" ] \
+    || die "nvm_engines_node_to_version '${INPUT}': expected '${EXPECTED}', got '${OUTPUT}'"
+}
+
+# Concrete ranges resolve to the first version-ish token.
+assert_version '>=14.17.0' '14.17.0'
+assert_version '^16.0.0'   '16.0.0'
+assert_version '~12.22.1'  '12.22.1'
+assert_version 'v12'       '12'
+assert_version '16'        '16'
+
+# Wildcard tails are dropped (nvm treats a bare major as "latest of that major").
+assert_version '14.x'      '14'
+assert_version '14.*'      '14'
+assert_version '14.X'      '14'
+
+# Compound ranges -> first bound.
+assert_version '>=14 <17'  '14'
+assert_version '>= 14'     '14'
+
+# Open-ended / non-numeric -> suggest nvm's "node" (latest).
+assert_version '*'         'node'
+assert_version 'x'         'node'
+assert_version 'latest'    'node'
+assert_version 'lts/*'     'node'
+assert_version ''          'node'

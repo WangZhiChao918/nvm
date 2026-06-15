@@ -1,0 +1,58 @@
+#!/bin/sh
+
+die () { echo "$@" ; cleanup ; exit 1; }
+
+cleanup() {
+  cd "${ORIG_PWD}" 2>/dev/null || true
+  [ -n "${TMP_DIR-}" ] && rm -rf "${TMP_DIR}"
+}
+
+export NVM_DIR="$(cd ../.. && pwd)"
+
+: nvm.sh
+\. ../../nvm.sh
+
+\. ../common.sh
+
+ORIG_PWD="$(pwd)"
+
+# Fresh, empty dir (no ambient .nvmrc above it) with a package.json that declares
+# engines.node but no .nvmrc.
+TMP_DIR="$(mktemp -d)"
+printf '%s\n' '{' '  "engines": {' '    "node": ">=16.0.0"' '  }' '}' > "${TMP_DIR}/package.json"
+cd "${TMP_DIR}" || die "could not cd to temp dir"
+
+# Default behavior is unchanged (still exits 127); a Tip is *added* to stderr.
+try_err nvm use
+[ "_${CAPTURED_EXIT_CODE}" = "_127" ] \
+  || die "nvm use (no version, no .nvmrc) should still exit 127, got ${CAPTURED_EXIT_CODE}"
+case "${CAPTURED_STDERR}" in
+  *'Tip: package.json engines.node is ">=16.0.0"'*) ;;
+  *) die "nvm use should surface the engines.node range; got '${CAPTURED_STDERR}'" ;;
+esac
+case "${CAPTURED_STDERR}" in
+  *'nvm install 16.0.0'*) ;;
+  *) die "nvm use hint should include an executable suggestion; got '${CAPTURED_STDERR}'" ;;
+esac
+
+# The suggestion is informational (stderr); stdout stays empty.
+try nvm use
+[ -z "${CAPTURED_STDOUT}" ] \
+  || die "nvm use (no version) should not print to stdout; got '${CAPTURED_STDOUT}'"
+
+# --silent suppresses the engines hint (no behavior change under --silent).
+try_err nvm use --silent
+case "${CAPTURED_STDERR}" in
+  *'Tip: package.json engines.node'*) die "nvm use --silent must not print the engines hint; got '${CAPTURED_STDERR}'" ;;
+esac
+
+# When a .nvmrc is present, the hint path is not reached (existing behavior wins),
+# even if the .nvmrc does not resolve to an installed version.
+echo 'lts/*' > "${TMP_DIR}/.nvmrc"
+try_err nvm use
+case "${CAPTURED_STDERR}" in
+  *'Tip: package.json engines.node'*) die "nvm use must not show the engines hint when a .nvmrc exists; got '${CAPTURED_STDERR}'" ;;
+esac
+rm -f "${TMP_DIR}/.nvmrc"
+
+cleanup

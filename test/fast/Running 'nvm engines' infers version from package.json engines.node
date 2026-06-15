@@ -1,0 +1,66 @@
+#!/bin/sh
+
+die () { echo "$@" ; cleanup ; exit 1; }
+
+cleanup() {
+  cd "${ORIG_PWD}" 2>/dev/null || true
+  [ -n "${TMP_DIR-}" ] && rm -rf "${TMP_DIR}"
+}
+
+export NVM_DIR="$(cd ../.. && pwd)"
+
+: nvm.sh
+\. ../../nvm.sh
+
+\. ../common.sh
+
+ORIG_PWD="$(pwd)"
+
+# Run from a fresh, empty directory so nothing above the test dir interferes.
+TMP_DIR="$(mktemp -d)"
+printf '%s\n' '{' '  "engines": {' '    "node": ">=14.17.0"' '  }' '}' > "${TMP_DIR}/package.json"
+cd "${TMP_DIR}" || die "could not cd to temp dir"
+
+# Happy path: the inferred, executable token is printed to stdout; exit 0.
+try nvm engines
+[ "_${CAPTURED_STDOUT}" = "_14.17.0" ] \
+  || die "nvm engines stdout: expected '14.17.0', got '${CAPTURED_STDOUT}'"
+[ "_${CAPTURED_EXIT_CODE}" = "_0" ] \
+  || die "nvm engines exit: expected 0, got ${CAPTURED_EXIT_CODE}"
+
+# The human-readable note goes to stderr (keeping stdout scriptable).
+try_err nvm engines
+case "${CAPTURED_STDERR}" in
+  *"engines.node <>=14.17.0>"*) ;;
+  *) die "nvm engines stderr should mention the range; got '${CAPTURED_STDERR}'" ;;
+esac
+
+# --silent suppresses the stderr note but still prints the token to stdout.
+try nvm engines --silent
+[ "_${CAPTURED_STDOUT}" = "_14.17.0" ] \
+  || die "nvm engines --silent stdout: expected '14.17.0', got '${CAPTURED_STDOUT}'"
+try_err nvm engines --silent
+[ -z "${CAPTURED_STDERR}" ] \
+  || die "nvm engines --silent should print no stderr note; got '${CAPTURED_STDERR}'"
+
+# package.json without an engines.node field -> non-zero with a focused message.
+printf '%s\n' '{ "name": "x" }' > "${TMP_DIR}/package.json"
+try_err nvm engines
+[ "_${CAPTURED_EXIT_CODE}" != "_0" ] \
+  || die "nvm engines without engines.node should be non-zero"
+case "${CAPTURED_STDERR}" in
+  *'engines.node'*) ;;
+  *) die "nvm engines error should mention engines.node; got '${CAPTURED_STDERR}'" ;;
+esac
+
+# No package.json at all -> non-zero with a focused message.
+rm -f "${TMP_DIR}/package.json"
+try_err nvm engines
+[ "_${CAPTURED_EXIT_CODE}" != "_0" ] \
+  || die "nvm engines without package.json should be non-zero"
+case "${CAPTURED_STDERR}" in
+  *'package.json'*) ;;
+  *) die "nvm engines error should mention package.json; got '${CAPTURED_STDERR}'" ;;
+esac
+
+cleanup

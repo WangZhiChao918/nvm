@@ -644,6 +644,50 @@ nvm_rc_version() {
   nvm_echo "${NVM_RC_VERSION}" >&3
 }
 
+nvm_find_package_json() {
+  local NVM_PROJECT_DIR
+  NVM_PROJECT_DIR="$(nvm_find_up 'package.json')"
+  if [ -e "${NVM_PROJECT_DIR}/package.json" ]; then
+    nvm_echo "${NVM_PROJECT_DIR}/package.json"
+  fi
+}
+
+nvm_engines_node() {
+  local NVM_PACKAGE_JSON
+  NVM_PACKAGE_JSON="${1-}"
+  if [ -z "${NVM_PACKAGE_JSON}" ] || [ ! -r "${NVM_PACKAGE_JSON}" ]; then
+    return 1
+  fi
+  # Extract the value of "engines"."node" without depending on node/jq (nvm may run
+  # before any node is installed). First isolate the "engines" object region, then
+  # pull the "node" string value out of it.
+  local NVM_ENGINES_NODE
+  NVM_ENGINES_NODE="$(command sed -n '/"engines"[[:space:]]*:/,/}/p' "${NVM_PACKAGE_JSON}" \
+    | command sed -n 's/.*"node"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | command head -1)"
+  if [ -z "${NVM_ENGINES_NODE}" ]; then
+    return 1
+  fi
+  nvm_echo "${NVM_ENGINES_NODE}"
+}
+
+nvm_engines_node_to_version() {
+  local NVM_ENGINES_RANGE
+  NVM_ENGINES_RANGE="${1-}"
+  # Best-effort conversion of a semver range into an nvm-usable version-ish suggestion:
+  # strip a leading run of comparators / `^` / `~` / `v` (and spaces), take the first
+  # version token (e.g. `>=14 <17` -> `14`), then drop wildcard tails (`14.x` -> `14`).
+  local NVM_ENGINES_TOKEN
+  NVM_ENGINES_TOKEN="$(nvm_echo "${NVM_ENGINES_RANGE}" \
+    | command sed 's/^[\^~vV><=[:space:]]*//' \
+    | command awk '{ print $1 }' \
+    | command sed 's/\.[xX*].*$//')"
+  case "${NVM_ENGINES_TOKEN}" in
+    [0-9]*) nvm_echo "${NVM_ENGINES_TOKEN}" ;;
+    *) nvm_echo 'node' ;;
+  esac
+}
+
 nvm_clang_version() {
   clang --version | command awk '{ if ($2 == "version") print $3; else if ($3 == "version") print $4 }' | command sed 's/-.*$//g'
 }
@@ -3256,6 +3300,7 @@ nvm() {
         nvm_echo '    --lts                                     Uses automatic LTS (long-term support) alias `lts/*`, if available.'
         nvm_echo '    --lts=<LTS name>                          Uses automatic alias for provided LTS line, if available.'
         nvm_echo '  nvm current                                 Display the active node version (resolved via $PATH; not affected by .nvmrc).'
+        nvm_echo '  nvm engines [--silent]                      Infer & print a suggested node version from package.json "engines.node" (used when no .nvmrc is present).'
         nvm_echo '  nvm ls [<version>]                          List installed versions, matching a given <version> if provided'
         nvm_echo '    --no-colors                               Suppress colored output'
         nvm_echo '    --no-alias                                Suppress `nvm alias` output'
@@ -4040,6 +4085,20 @@ nvm() {
           VERSION="$(nvm_version "${PROVIDED_VERSION}")"
         fi
         if [ -z "${VERSION}" ]; then
+          if [ "${NVM_SILENT:-0}" -ne 1 ] && [ -z "${PROVIDED_VERSION-}" ]; then
+            local NVM_ENGINES_PACKAGE_JSON
+            NVM_ENGINES_PACKAGE_JSON="$(nvm_find_package_json)"
+            if [ -n "${NVM_ENGINES_PACKAGE_JSON}" ]; then
+              local NVM_ENGINES_RANGE
+              NVM_ENGINES_RANGE="$(nvm_engines_node "${NVM_ENGINES_PACKAGE_JSON}")"
+              if [ -n "${NVM_ENGINES_RANGE}" ]; then
+                local NVM_ENGINES_SUGGESTION
+                NVM_ENGINES_SUGGESTION="$(nvm_engines_node_to_version "${NVM_ENGINES_RANGE}")"
+                nvm_err "Tip: package.json engines.node is \"${NVM_ENGINES_RANGE}\""
+                nvm_err "     run: nvm install ${NVM_ENGINES_SUGGESTION}   (or: nvm use ${NVM_ENGINES_SUGGESTION})"
+              fi
+            fi
+          fi
           nvm_err 'Please see `nvm --help` or https://github.com/nvm-sh/nvm#nvmrc for more information.'
           return 127
         fi
@@ -4397,6 +4456,32 @@ nvm() {
     "current")
       nvm_version current
     ;;
+    "engines")
+      local NVM_SILENT
+      while [ $# -ne 0 ]; do
+        case "${1}" in
+          --silent) NVM_SILENT=1 ;;
+          --) ;;
+        esac
+        shift
+      done
+      local NVM_PACKAGE_JSON
+      NVM_PACKAGE_JSON="$(nvm_find_package_json)"
+      if [ -z "${NVM_PACKAGE_JSON}" ]; then
+        nvm_err 'No package.json found in the current directory tree.'
+        return 3
+      fi
+      local NVM_ENGINES_RANGE
+      NVM_ENGINES_RANGE="$(nvm_engines_node "${NVM_PACKAGE_JSON}")"
+      if [ -z "${NVM_ENGINES_RANGE}" ]; then
+        nvm_err "No \"engines.node\" field found in '${NVM_PACKAGE_JSON}'."
+        return 3
+      fi
+      if [ "${NVM_SILENT:-0}" -ne 1 ]; then
+        nvm_err "Found '${NVM_PACKAGE_JSON}' with engines.node <${NVM_ENGINES_RANGE}>"
+      fi
+      nvm_engines_node_to_version "${NVM_ENGINES_RANGE}"
+    ;;
     "which")
       local NVM_SILENT
       local provided_version
@@ -4711,6 +4796,7 @@ nvm() {
         nvm_get_artifact_compression nvm_install_binary_extract nvm_extract_tarball \
         nvm_process_nvmrc nvm_nvmrc_invalid_msg \
         nvm_write_nvmrc \
+        nvm_find_package_json nvm_engines_node nvm_engines_node_to_version \
         >/dev/null 2>&1
       unset NVM_NODEJS_ORG_MIRROR NVM_IOJS_ORG_MIRROR NVM_DIR \
         NVM_CD_FLAGS NVM_BIN NVM_INC NVM_MAKE_JOBS \

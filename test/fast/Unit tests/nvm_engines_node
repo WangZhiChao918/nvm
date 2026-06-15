@@ -1,0 +1,37 @@
+#!/bin/sh
+
+die () { echo "$@" ; cleanup ; exit 1; }
+
+cleanup () {
+  [ -n "${TMP_DIR-}" ] && rm -rf "${TMP_DIR}"
+}
+
+: nvm.sh
+\. ../../../nvm.sh
+
+TMP_DIR="$(mktemp -d)"
+
+# nested, multiline engines object with a sibling key
+printf '%s\n' '{' '  "name": "demo",' '  "engines": {' '    "node": ">=14.17.0",' '    "npm": ">=6"' '  }' '}' > "${TMP_DIR}/nested.json"
+OUTPUT="$(nvm_engines_node "${TMP_DIR}/nested.json")"
+[ "_${OUTPUT}" = "_>=14.17.0" ] || die "nested engines.node: expected '>=14.17.0', got '${OUTPUT}'"
+
+# inline engines object on a single line
+printf '%s\n' '{ "engines": { "node": "^18" } }' > "${TMP_DIR}/inline.json"
+OUTPUT="$(nvm_engines_node "${TMP_DIR}/inline.json")"
+[ "_${OUTPUT}" = "_^18" ] || die "inline engines.node: expected '^18', got '${OUTPUT}'"
+
+# engines present but no "node" key -> failure, no output
+printf '%s\n' '{' '  "engines": {' '    "npm": ">=6"' '  }' '}' > "${TMP_DIR}/nonode.json"
+OUTPUT="$(nvm_engines_node "${TMP_DIR}/nonode.json")" && die "engines without node should fail"
+[ -z "${OUTPUT}" ] || die "engines without node should print nothing, got '${OUTPUT}'"
+
+# no engines field at all -> failure
+printf '%s\n' '{ "name": "x", "version": "1.0.0" }' > "${TMP_DIR}/noengines.json"
+nvm_engines_node "${TMP_DIR}/noengines.json" && die "missing engines should fail"
+
+# missing / empty path -> failure
+nvm_engines_node "${TMP_DIR}/does-not-exist.json" && die "missing file should fail"
+nvm_engines_node "" && die "empty path should fail"
+
+cleanup

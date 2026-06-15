@@ -1,0 +1,95 @@
+#!/bin/sh
+
+# Drives `nvm doctor` through the failure modes a front-end dev hits on a
+# corporate network. curl/wget are mocked so no network is touched; the test
+# asserts the tailored suggestions and the exit code (0 healthy, 1 problems).
+
+cleanup() {
+  unset -f curl wget nvm_has die make_curl assert_contains 2>/dev/null
+  unset CURL_EXIT WGET_EXIT OUT RC 2>/dev/null
+  unset NVM_NODEJS_ORG_MIRROR NVM_IOJS_ORG_MIRROR 2>/dev/null
+  unset http_proxy https_proxy all_proxy no_proxy 2>/dev/null
+  unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY 2>/dev/null
+}
+
+die() { echo "$@" ; cleanup ; exit 1; }
+
+export NVM_DIR="$(cd ../.. && pwd)"
+
+: nvm.sh
+\. ../../nvm.sh
+
+# curl mock: connectivity result driven by ${CURL_EXIT}; `-V` returns a benign
+# version so nvm_download does not enable --compressed.
+make_curl() {
+  curl() {
+    case " $* " in
+      *' -V '*) echo 'curl 8.0.0 (x86_64-pc-linux-gnu) libcurl/8.0.0'; return 0 ;;
+    esac
+    return "${CURL_EXIT:-0}"
+  }
+}
+
+# assert_contains HAYSTACK NEEDLE LABEL
+assert_contains() {
+  case "${1}" in
+    *"${2}"*) ;;
+    *) die "${3}: expected output to contain >${2}<; got >>>${1}<<<" ;;
+  esac
+}
+
+# Start from a clean environment: default mirrors, no proxy.
+unset NVM_NODEJS_ORG_MIRROR NVM_IOJS_ORG_MIRROR
+unset http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
+
+# 1. Reachable default mirrors via curl -> healthy, exit 0.
+make_curl
+CURL_EXIT=0
+OUT="$(nvm doctor 2>&1)"; RC=$?
+[ "${RC}" -eq 0 ] || die "reachable: expected exit 0, got ${RC} >>>${OUT}<<<"
+assert_contains "${OUT}" 'connectivity: OK' 'reachable'
+assert_contains "${OUT}" 'looks healthy' 'reachable'
+
+# 2. Default mirror unreachable, no proxy -> corporate-proxy hint, exit 1.
+CURL_EXIT=7
+OUT="$(nvm doctor 2>&1)"; RC=$?
+[ "${RC}" -eq 1 ] || die "unreachable/no-proxy: expected exit 1, got ${RC} >>>${OUT}<<<"
+assert_contains "${OUT}" 'connectivity: FAILED' 'unreachable/no-proxy'
+assert_contains "${OUT}" 'behind a corporate proxy' 'unreachable/no-proxy'
+
+# 3. Default mirror unreachable, proxy set -> proxy hint + proxy is reported.
+export https_proxy='http://proxy.corp.example:8080'
+OUT="$(nvm doctor 2>&1)"; RC=$?
+[ "${RC}" -eq 1 ] || die "unreachable/proxy: expected exit 1, got ${RC} >>>${OUT}<<<"
+assert_contains "${OUT}" 'while a proxy is set' 'unreachable/proxy'
+assert_contains "${OUT}" "https_proxy: 'http://proxy.corp.example:8080'" 'unreachable/proxy'
+unset https_proxy
+
+# 4. Custom node mirror, unreachable -> verify-the-custom-mirror hint.
+export NVM_NODEJS_ORG_MIRROR='https://nodejs.internal.example/dist'
+CURL_EXIT=7
+OUT="$(nvm doctor 2>&1)"; RC=$?
+[ "${RC}" -eq 1 ] || die "custom-mirror: expected exit 1, got ${RC} >>>${OUT}<<<"
+assert_contains "${OUT}" '(custom, from $NVM_NODEJS_ORG_MIRROR)' 'custom-mirror'
+assert_contains "${OUT}" 'custom node mirror is unreachable' 'custom-mirror'
+unset NVM_NODEJS_ORG_MIRROR
+
+# 5. No downloader at all -> install-curl/wget hint, connectivity skipped.
+unset -f curl
+nvm_has() { case "${1}" in curl|wget) return 1 ;; *) command -v "${1}" >/dev/null 2>&1 ;; esac }
+OUT="$(nvm doctor 2>&1)"; RC=$?
+[ "${RC}" -eq 1 ] || die "no-downloader: expected exit 1, got ${RC} >>>${OUT}<<<"
+assert_contains "${OUT}" 'Install curl or wget' 'no-downloader'
+assert_contains "${OUT}" 'connectivity: skipped' 'no-downloader'
+unset -f nvm_has
+
+# 6. wget present (curl absent), reachable -> healthy, exit 0.
+wget() { return "${WGET_EXIT:-0}"; }
+nvm_has() { case "${1}" in wget) return 0 ;; curl) return 1 ;; *) command -v "${1}" >/dev/null 2>&1 ;; esac }
+WGET_EXIT=0
+OUT="$(nvm doctor 2>&1)"; RC=$?
+[ "${RC}" -eq 0 ] || die "wget reachable: expected exit 0, got ${RC} >>>${OUT}<<<"
+assert_contains "${OUT}" 'downloader: wget' 'wget reachable'
+assert_contains "${OUT}" 'connectivity: OK' 'wget reachable'
+
+cleanup

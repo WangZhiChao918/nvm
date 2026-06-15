@@ -1,0 +1,80 @@
+#!/bin/sh
+
+# Unit test for nvm_doctor_check_mirror: it must report mirror reachability
+# purely through its exit code, using mocked curl/wget so no network is hit.
+#   0 = reachable, 1 = unreachable, 2 = no mirror given, 3 = no downloader.
+
+cleanup() {
+  unset -f curl wget nvm_has die 2>/dev/null
+  unset CURL_EXIT WGET_EXIT 2>/dev/null
+}
+
+die() { echo "$@" ; cleanup ; exit 1; }
+
+export NVM_DIR="$(cd ../../.. && pwd)"
+
+: nvm.sh
+\. ../../../nvm.sh
+
+# A curl mock whose connectivity result is driven by ${CURL_EXIT}. The `-V`
+# probe (used by nvm_download to decide on --compressed) returns a benign
+# version string with no "Features:" line, so compression stays off.
+make_curl() {
+  curl() {
+    case " $* " in
+      *' -V '*) echo 'curl 8.0.0 (x86_64-pc-linux-gnu) libcurl/8.0.0'; return 0 ;;
+    esac
+    return "${CURL_EXIT:-0}"
+  }
+}
+
+# A wget mock whose connectivity result is driven by ${WGET_EXIT}.
+make_wget() {
+  wget() {
+    return "${WGET_EXIT:-0}"
+  }
+}
+
+# 1. No mirror argument -> 2 (checked before anything else).
+nvm_doctor_check_mirror ''
+RC=$?
+[ "${RC}" -eq 2 ] || die "no mirror arg: expected 2, got ${RC}"
+
+# 2. No downloader available -> 3.
+nvm_has() { case "${1}" in curl|wget) return 1 ;; *) command -v "${1}" >/dev/null 2>&1 ;; esac }
+nvm_doctor_check_mirror 'https://nodejs.org/dist'
+RC=$?
+[ "${RC}" -eq 3 ] || die "no downloader: expected 3, got ${RC}"
+unset -f nvm_has
+
+# 3. curl present, mirror reachable -> 0.
+make_curl
+nvm_has() { case "${1}" in curl) return 0 ;; wget) return 1 ;; *) command -v "${1}" >/dev/null 2>&1 ;; esac }
+CURL_EXIT=0
+nvm_doctor_check_mirror 'https://nodejs.org/dist'
+RC=$?
+[ "${RC}" -eq 0 ] || die "curl reachable: expected 0, got ${RC}"
+
+# 4. curl present, mirror unreachable (e.g. curl exit 7) -> 1.
+CURL_EXIT=7
+nvm_doctor_check_mirror 'https://nodejs.org/dist'
+RC=$?
+[ "${RC}" -eq 1 ] || die "curl unreachable: expected 1, got ${RC}"
+unset -f curl nvm_has
+unset CURL_EXIT
+
+# 5. wget present (curl absent), mirror reachable -> 0.
+make_wget
+nvm_has() { case "${1}" in wget) return 0 ;; curl) return 1 ;; *) command -v "${1}" >/dev/null 2>&1 ;; esac }
+WGET_EXIT=0
+nvm_doctor_check_mirror 'https://iojs.org/dist'
+RC=$?
+[ "${RC}" -eq 0 ] || die "wget reachable: expected 0, got ${RC}"
+
+# 6. wget present, mirror unreachable -> 1.
+WGET_EXIT=1
+nvm_doctor_check_mirror 'https://iojs.org/dist'
+RC=$?
+[ "${RC}" -eq 1 ] || die "wget unreachable: expected 1, got ${RC}"
+
+cleanup

@@ -2278,6 +2278,182 @@ nvm_get_mirror() {
   nvm_echo "${NVM_MIRROR}"
 }
 
+nvm_doctor_check_mirror() {
+  # Probe a mirror's version index (the same resource `nvm ls-remote` and
+  # `nvm install` depend on) and report reachability through the exit code:
+  #   0 = reachable, 1 = unreachable, 2 = no mirror given, 3 = no downloader.
+  local NVM_DOCTOR_MIRROR
+  NVM_DOCTOR_MIRROR="${1-}"
+  if [ -z "${NVM_DOCTOR_MIRROR}" ]; then
+    return 2
+  fi
+  if ! nvm_has curl && ! nvm_has wget; then
+    return 3
+  fi
+  if nvm_download -L -s "${NVM_DOCTOR_MIRROR}/index.tab" -o /dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+nvm_doctor() {
+  nvm_is_zsh && setopt local_options shwordsplit
+
+  local NVM_DOCTOR_PROBLEMS
+  NVM_DOCTOR_PROBLEMS=0
+
+  nvm_err 'nvm doctor: checking Node/io.js download configuration'
+
+  # --- downloader ---------------------------------------------------------
+  local NVM_DOCTOR_HAS_DOWNLOADER
+  NVM_DOCTOR_HAS_DOWNLOADER=0
+  nvm_err ''
+  if nvm_has curl; then
+    NVM_DOCTOR_HAS_DOWNLOADER=1
+    nvm_err "downloader: curl ($(nvm_command_info curl))"
+  elif nvm_has wget; then
+    NVM_DOCTOR_HAS_DOWNLOADER=1
+    nvm_err "downloader: wget ($(nvm_command_info wget))"
+  else
+    NVM_DOCTOR_PROBLEMS=$((NVM_DOCTOR_PROBLEMS + 1))
+    nvm_err 'downloader: none found (nvm needs curl or wget to download Node)'
+  fi
+
+  # --- proxy environment --------------------------------------------------
+  # nvm has no proxy logic of its own; curl/wget read these variables, so a
+  # misconfigured proxy is a common cause of "mirror unreachable" on a
+  # corporate network. Report them so the user can spot a stale value.
+  local NVM_DOCTOR_HAS_PROXY
+  NVM_DOCTOR_HAS_PROXY=0
+  if [ -n "${http_proxy-}" ] || [ -n "${https_proxy-}" ] || [ -n "${all_proxy-}" ] \
+    || [ -n "${HTTP_PROXY-}" ] || [ -n "${HTTPS_PROXY-}" ] || [ -n "${ALL_PROXY-}" ]; then
+    NVM_DOCTOR_HAS_PROXY=1
+  fi
+  nvm_err ''
+  nvm_err 'proxy environment:'
+  nvm_err "  http_proxy: '${http_proxy-}'"
+  nvm_err "  https_proxy: '${https_proxy-}'"
+  nvm_err "  all_proxy: '${all_proxy-}'"
+  nvm_err "  no_proxy: '${no_proxy-}'"
+  if [ -n "${HTTP_PROXY-}" ] || [ -n "${HTTPS_PROXY-}" ] || [ -n "${ALL_PROXY-}" ] || [ -n "${NO_PROXY-}" ]; then
+    nvm_err "  HTTP_PROXY: '${HTTP_PROXY-}'"
+    nvm_err "  HTTPS_PROXY: '${HTTPS_PROXY-}'"
+    nvm_err "  ALL_PROXY: '${ALL_PROXY-}'"
+    nvm_err "  NO_PROXY: '${NO_PROXY-}'"
+  fi
+  if [ -n "${NVM_AUTH_HEADER-}" ]; then
+    nvm_err '  NVM_AUTH_HEADER: set (value hidden)'
+  else
+    nvm_err '  NVM_AUTH_HEADER: not set'
+  fi
+
+  # --- mirrors + connectivity --------------------------------------------
+  nvm_err ''
+  nvm_err 'mirrors:'
+
+  local NVM_DOCTOR_NODE_MIRROR
+  NVM_DOCTOR_NODE_MIRROR="$(nvm_get_mirror node std 2>/dev/null)"
+  local NVM_DOCTOR_NODE_UNREACHABLE
+  NVM_DOCTOR_NODE_UNREACHABLE=0
+  if [ -z "${NVM_DOCTOR_NODE_MIRROR}" ]; then
+    NVM_DOCTOR_PROBLEMS=$((NVM_DOCTOR_PROBLEMS + 1))
+    nvm_err "  node: invalid (\$NVM_NODEJS_ORG_MIRROR='${NVM_NODEJS_ORG_MIRROR-}' is not a plain http(s) URL)"
+  else
+    if [ -n "${NVM_NODEJS_ORG_MIRROR-}" ]; then
+      nvm_err "  node: ${NVM_DOCTOR_NODE_MIRROR} (custom, from \$NVM_NODEJS_ORG_MIRROR)"
+    else
+      nvm_err "  node: ${NVM_DOCTOR_NODE_MIRROR} (default)"
+    fi
+    if [ "${NVM_DOCTOR_HAS_DOWNLOADER}" = '1' ]; then
+      if nvm_doctor_check_mirror "${NVM_DOCTOR_NODE_MIRROR}"; then
+        nvm_err '    connectivity: OK'
+      else
+        NVM_DOCTOR_NODE_UNREACHABLE=1
+        NVM_DOCTOR_PROBLEMS=$((NVM_DOCTOR_PROBLEMS + 1))
+        nvm_err "    connectivity: FAILED (could not fetch ${NVM_DOCTOR_NODE_MIRROR}/index.tab)"
+      fi
+    else
+      nvm_err '    connectivity: skipped (no downloader)'
+    fi
+  fi
+
+  local NVM_DOCTOR_IOJS_MIRROR
+  NVM_DOCTOR_IOJS_MIRROR="$(nvm_get_mirror iojs std 2>/dev/null)"
+  local NVM_DOCTOR_IOJS_UNREACHABLE
+  NVM_DOCTOR_IOJS_UNREACHABLE=0
+  if [ -z "${NVM_DOCTOR_IOJS_MIRROR}" ]; then
+    NVM_DOCTOR_PROBLEMS=$((NVM_DOCTOR_PROBLEMS + 1))
+    nvm_err "  iojs: invalid (\$NVM_IOJS_ORG_MIRROR='${NVM_IOJS_ORG_MIRROR-}' is not a plain http(s) URL)"
+  else
+    if [ -n "${NVM_IOJS_ORG_MIRROR-}" ]; then
+      nvm_err "  iojs: ${NVM_DOCTOR_IOJS_MIRROR} (custom, from \$NVM_IOJS_ORG_MIRROR)"
+    else
+      nvm_err "  iojs: ${NVM_DOCTOR_IOJS_MIRROR} (default)"
+    fi
+    if [ "${NVM_DOCTOR_HAS_DOWNLOADER}" = '1' ]; then
+      if nvm_doctor_check_mirror "${NVM_DOCTOR_IOJS_MIRROR}"; then
+        nvm_err '    connectivity: OK'
+      else
+        NVM_DOCTOR_IOJS_UNREACHABLE=1
+        NVM_DOCTOR_PROBLEMS=$((NVM_DOCTOR_PROBLEMS + 1))
+        nvm_err "    connectivity: FAILED (could not fetch ${NVM_DOCTOR_IOJS_MIRROR}/index.tab)"
+      fi
+    else
+      nvm_err '    connectivity: skipped (no downloader)'
+    fi
+  fi
+
+  # --- suggestions --------------------------------------------------------
+  nvm_err ''
+  nvm_err 'suggestions:'
+  local NVM_DOCTOR_SUGGESTED
+  NVM_DOCTOR_SUGGESTED=0
+
+  if [ "${NVM_DOCTOR_HAS_DOWNLOADER}" = '0' ]; then
+    nvm_err '  - Install curl or wget; nvm needs one of them to download Node.'
+    NVM_DOCTOR_SUGGESTED=1
+  fi
+
+  if [ -z "${NVM_DOCTOR_NODE_MIRROR}" ]; then
+    nvm_err "  - \$NVM_NODEJS_ORG_MIRROR is not a valid URL. Unset it, or set it to a plain http(s) URL such as https://nodejs.org/dist"
+    NVM_DOCTOR_SUGGESTED=1
+  fi
+  if [ -z "${NVM_DOCTOR_IOJS_MIRROR}" ]; then
+    nvm_err "  - \$NVM_IOJS_ORG_MIRROR is not a valid URL. Unset it, or set it to a plain http(s) URL such as https://iojs.org/dist"
+    NVM_DOCTOR_SUGGESTED=1
+  fi
+
+  if [ "${NVM_DOCTOR_NODE_UNREACHABLE}" = '1' ]; then
+    if [ -n "${NVM_NODEJS_ORG_MIRROR-}" ]; then
+      nvm_err "  - The custom node mirror is unreachable. Verify \$NVM_NODEJS_ORG_MIRROR is correct and reachable from your network."
+    elif [ "${NVM_DOCTOR_HAS_PROXY}" = '1' ]; then
+      nvm_err "  - The default node mirror is unreachable while a proxy is set. Check your proxy settings, or set \$NVM_NODEJS_ORG_MIRROR to an internal mirror."
+    else
+      nvm_err "  - The default node mirror is unreachable. If you are behind a corporate proxy, set http_proxy/https_proxy, or set \$NVM_NODEJS_ORG_MIRROR to an internal mirror."
+    fi
+    NVM_DOCTOR_SUGGESTED=1
+  fi
+  if [ "${NVM_DOCTOR_IOJS_UNREACHABLE}" = '1' ]; then
+    if [ -n "${NVM_IOJS_ORG_MIRROR-}" ]; then
+      nvm_err "  - The custom io.js mirror is unreachable. Verify \$NVM_IOJS_ORG_MIRROR is correct and reachable from your network."
+    elif [ "${NVM_DOCTOR_HAS_PROXY}" = '1' ]; then
+      nvm_err "  - The default io.js mirror is unreachable while a proxy is set. Check your proxy settings, or set \$NVM_IOJS_ORG_MIRROR to an internal mirror."
+    else
+      nvm_err "  - The default io.js mirror is unreachable. If you are behind a corporate proxy, set http_proxy/https_proxy, or set \$NVM_IOJS_ORG_MIRROR to an internal mirror."
+    fi
+    NVM_DOCTOR_SUGGESTED=1
+  fi
+
+  if [ "${NVM_DOCTOR_SUGGESTED}" = '0' ]; then
+    nvm_err '  - None. Node/io.js download configuration looks healthy.'
+  fi
+
+  if [ "${NVM_DOCTOR_PROBLEMS}" -gt 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
 # args: os, prefixed version, version, tarball, extract directory
 nvm_install_binary_extract() {
   if [ "$#" -ne 5 ]; then
@@ -3280,6 +3456,7 @@ nvm() {
         nvm_echo '    --silent                                  Silences stdout/stderr output when a version is omitted'
         nvm_echo '  nvm cache dir                               Display path to the cache directory for nvm'
         nvm_echo '  nvm cache clear                             Empty cache directory for nvm'
+        nvm_echo '  nvm doctor                                  Diagnose Node/io.js mirror URLs, proxy settings, and connectivity'
         nvm_echo '  nvm set-colors [<color codes>]              Set five text colors using format "yMeBg". Available when supported.'
         nvm_echo '                                               Initial colors are:'
         nvm_echo_with_colors "                                                  $(nvm_wrap_with_color_code 'b' 'b')$(nvm_wrap_with_color_code 'y' 'y')$(nvm_wrap_with_color_code 'g' 'g')$(nvm_wrap_with_color_code 'r' 'r')$(nvm_wrap_with_color_code 'e' 'e')"
@@ -3432,6 +3609,11 @@ nvm() {
         nvm_err "${NVM_DEBUG_COMMAND}: $(nvm_sanitize_path "${NVM_DEBUG_OUTPUT}")"
       done
       return 42
+    ;;
+
+    "doctor")
+      nvm_doctor
+      return $?
     ;;
 
     "install" | "i")
@@ -4675,7 +4857,7 @@ nvm() {
         nvm_ls_remote nvm_ls_remote_iojs nvm_ls_remote_index_tab \
         nvm_ls nvm_remote_version nvm_remote_versions \
         nvm_install_binary nvm_install_source nvm_clang_version \
-        nvm_get_mirror nvm_get_download_slug nvm_download_artifact \
+        nvm_get_mirror nvm_doctor nvm_doctor_check_mirror nvm_get_download_slug nvm_download_artifact \
         nvm_install_npm_if_needed nvm_use_if_needed nvm_check_file_permissions \
         nvm_print_versions nvm_compute_checksum \
         nvm_get_checksum_binary \

@@ -644,6 +644,58 @@ nvm_rc_version() {
   nvm_echo "${NVM_RC_VERSION}" >&3
 }
 
+# Reports, without changing anything, how the active node compares to the
+# `.nvmrc` that applies to the current directory. Prints the expected version,
+# the current version, and a suggested command to reconcile them. Intended for
+# use in shell hooks (e.g. on `cd`/`chpwd`) that want to prompt but not switch.
+# Exit status: 0 when the active version already matches; 1 on a mismatch
+# (including when the requested version is not installed); 2 on an invalid
+# `.nvmrc`; 3 when no `.nvmrc` is found.
+nvm_rc_status() {
+  local NVMRC_PATH
+  NVMRC_PATH="$(nvm_find_nvmrc)"
+
+  local NVM_CURRENT
+  NVM_CURRENT="$(nvm_ls_current)"
+
+  if [ ! -e "${NVMRC_PATH}" ]; then
+    nvm_echo ".nvmrc:   (none found searching up from ${PWD})"
+    nvm_echo "expected: (none)"
+    nvm_echo "current:  ${NVM_CURRENT}"
+    nvm_echo "status:   no .nvmrc found; nothing to compare"
+    nvm_echo "run:      (none)"
+    return 3
+  fi
+
+  local NVM_RC_RAW
+  if ! NVM_RC_RAW="$(nvm_process_nvmrc "${NVMRC_PATH}")"; then
+    nvm_echo ".nvmrc:   ${NVMRC_PATH}"
+    nvm_echo "status:   invalid .nvmrc; see error above"
+    return 2
+  fi
+
+  local NVM_RC_RESOLVED
+  NVM_RC_RESOLVED="$(nvm_version "${NVM_RC_RAW}")"
+
+  nvm_echo ".nvmrc:   ${NVMRC_PATH}"
+  nvm_echo "expected: ${NVM_RC_RESOLVED} (from \"${NVM_RC_RAW}\")"
+  nvm_echo "current:  ${NVM_CURRENT}"
+
+  if [ "_${NVM_RC_RESOLVED}" = '_N/A' ]; then
+    nvm_echo "status:   mismatch: .nvmrc wants \"${NVM_RC_RAW}\", which is not installed"
+    nvm_echo "run:      nvm install"
+    return 1
+  elif [ "_${NVM_RC_RESOLVED}" = "_${NVM_CURRENT}" ]; then
+    nvm_echo "status:   up to date: current node already matches .nvmrc"
+    nvm_echo "run:      (already matching; nothing to do)"
+    return 0
+  else
+    nvm_echo "status:   mismatch: current is ${NVM_CURRENT}, .nvmrc wants ${NVM_RC_RESOLVED}"
+    nvm_echo "run:      nvm use"
+    return 1
+  fi
+}
+
 nvm_clang_version() {
   clang --version | command awk '{ if ($2 == "version") print $3; else if ($3 == "version") print $4 }' | command sed 's/-.*$//g'
 }
@@ -3256,6 +3308,7 @@ nvm() {
         nvm_echo '    --lts                                     Uses automatic LTS (long-term support) alias `lts/*`, if available.'
         nvm_echo '    --lts=<LTS name>                          Uses automatic alias for provided LTS line, if available.'
         nvm_echo '  nvm current                                 Display the active node version (resolved via $PATH; not affected by .nvmrc).'
+        nvm_echo '  nvm rc-status                               Report whether the active node matches the .nvmrc for this directory (does not switch); prints a suggested command.'
         nvm_echo '  nvm ls [<version>]                          List installed versions, matching a given <version> if provided'
         nvm_echo '    --no-colors                               Suppress colored output'
         nvm_echo '    --no-alias                                Suppress `nvm alias` output'
@@ -4397,6 +4450,21 @@ nvm() {
     "current")
       nvm_version current
     ;;
+    "rc-status")
+      while [ $# -ne 0 ]; do
+        case "${1}" in
+          --) ;;
+          *)
+            nvm_err 'Usage: nvm rc-status'
+            nvm_err '  Reports whether the active node matches the .nvmrc for this directory. Takes no arguments.'
+            nvm_err '  Run `nvm --help` for full help.'
+            return 127
+          ;;
+        esac
+        shift
+      done
+      nvm_rc_status
+    ;;
     "which")
       local NVM_SILENT
       local provided_version
@@ -4680,7 +4748,7 @@ nvm() {
         nvm_print_versions nvm_compute_checksum \
         nvm_get_checksum_binary \
         nvm_get_checksum_alg nvm_get_checksum nvm_compare_checksum \
-        nvm_version nvm_rc_version nvm_match_version \
+        nvm_version nvm_rc_version nvm_rc_status nvm_match_version \
         nvm_ensure_default_set nvm_get_arch nvm_get_os \
         nvm_print_implicit_alias nvm_validate_implicit_alias \
         nvm_resolve_alias nvm_ls_current nvm_alias \

@@ -55,6 +55,7 @@ assert_usage 'Usage: nvm unalias <name>'             nvm unalias a b
 assert_usage 'Usage: nvm install-latest-npm'         nvm install-latest-npm extra
 assert_usage 'Usage: nvm reinstall-packages <version>' nvm reinstall-packages
 assert_usage 'Usage: nvm copy-packages <version>'    nvm copy-packages a b
+assert_usage 'Usage: nvm rc-status'                  nvm rc-status bogus
 
 # `nvm use` reaches its focused-usage guard only when version resolution returns
 # an empty string. From the CLI that cannot happen: an omitted version is caught

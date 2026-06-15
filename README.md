@@ -49,6 +49,9 @@
       - [bash](#bash)
       - [zsh](#zsh)
       - [fish](#fish)
+    - [Checking the current Node against `.nvmrc` (without switching)](#checking-the-current-node-against-nvmrc-without-switching)
+      - [bash](#bash-1)
+      - [zsh](#zsh-1)
 - [Running Tests](#running-tests)
 - [Environment variables](#environment-variables)
 - [Bash Completion](#bash-completion)
@@ -823,6 +826,60 @@ end
 # ~/.config/fish/config.fish
 # You must call it on initialization or listening to directory switching won't work
 load_nvm > /dev/stderr
+```
+
+#### Checking the current Node against `.nvmrc` (without switching)
+
+Some teams prefer to be *reminded* about a version mismatch when entering a project &mdash; rather than switching automatically. For that, use `nvm rc-status` (or call the reusable `nvm_rc_status` shell function directly from a hook). It searches upward for an `.nvmrc`, then prints the version it expects, the version currently active, and the command you would run to reconcile them. It never modifies `PATH` or switches versions.
+
+```sh
+$ nvm rc-status
+.nvmrc:   /path/to/project/.nvmrc
+expected: v18.16.0 (from "18")
+current:  v16.20.0
+status:   mismatch: current is v16.20.0, .nvmrc wants v18.16.0
+run:      nvm use
+```
+
+The exit status is designed for scripting inside a shell hook:
+
+- `0` &mdash; the active version already matches the `.nvmrc`.
+- `1` &mdash; there is a mismatch. If the requested version is not installed, the suggested command is `nvm install`; otherwise it is `nvm use`.
+- `3` &mdash; no `.nvmrc` was found searching up from the current directory.
+
+The recipes below print the status when you change into a directory that has an `.nvmrc`, but leave the decision to switch up to you. Like the snippets above, they are **not** supported by the `nvm` maintainers.
+
+##### bash
+
+Put the following after nvm is sourced in your `$HOME/.bashrc`:
+
+```bash
+cdnvm_status() {
+    command cd "$@" || return $?
+    # Only say something when an .nvmrc actually applies to this directory.
+    if [ -n "$(nvm_find_nvmrc)" ]; then
+        nvm rc-status || true
+    fi
+}
+
+alias cd='cdnvm_status'
+cdnvm_status "$PWD"
+```
+
+##### zsh
+
+```zsh
+# place this after nvm initialization!
+autoload -U add-zsh-hook
+
+nvmrc-status() {
+  if [ -n "$(nvm_find_nvmrc)" ]; then
+    nvm rc-status || true
+  fi
+}
+
+add-zsh-hook chpwd nvmrc-status
+nvmrc-status
 ```
 
 ## Running Tests

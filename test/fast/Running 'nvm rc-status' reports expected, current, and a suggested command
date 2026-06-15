@@ -1,0 +1,103 @@
+#!/bin/sh
+
+# `nvm rc-status` / `nvm_rc_status` is a read-only reporter: it compares the
+# active node against the directory's .nvmrc and suggests a command, but never
+# switches. Drive it with deterministic stubs for the resolver (nvm_version)
+# and the active version (nvm_ls_current) so no node install is required.
+
+die () { echo "$@" ; cleanup ; exit 1; }
+cleanup() {
+  cd "${ORIG_PWD}" 2>/dev/null || true
+  [ -n "${TMP_DIR-}" ] && rm -rf "${TMP_DIR}"
+}
+
+export NVM_DIR="$(cd ../.. && pwd)"
+
+: nvm.sh
+\. ../../nvm.sh
+
+\. ../common.sh
+
+ORIG_PWD="$(pwd)"
+
+# Run from a fresh, empty directory so nvm_find_nvmrc cannot pick up an ambient
+# .nvmrc from a parent of the test directory.
+TMP_DIR="$(mktemp -d)"
+cd "${TMP_DIR}" || die "could not cd to temp dir"
+
+# Resolve "18" to an "installed" version; treat everything else as not installed.
+nvm_version() {
+  case "${1-}" in
+    18) nvm_echo 'v18.16.0' ;;
+    *) nvm_echo 'N/A' ; return 3 ;;
+  esac
+}
+# The active version is controlled per-case via FAKE_CURRENT.
+nvm_ls_current() { nvm_echo "${FAKE_CURRENT}"; }
+
+# --- Case A: active version already matches .nvmrc -> exit 0, "up to date" ---
+printf '18\n' > .nvmrc
+FAKE_CURRENT='v18.16.0'
+try nvm_rc_status
+[ "_${CAPTURED_EXIT_CODE}" = "_0" ] \
+  || die "match: expected exit 0, got ${CAPTURED_EXIT_CODE}; out >${CAPTURED_STDOUT}<"
+case "${CAPTURED_STDOUT}" in
+  *'expected: v18.16.0 (from "18")'*) ;;
+  *) die "match: missing expected line; got >${CAPTURED_STDOUT}<" ;;
+esac
+case "${CAPTURED_STDOUT}" in
+  *'current:  v18.16.0'*) ;;
+  *) die "match: missing current line; got >${CAPTURED_STDOUT}<" ;;
+esac
+case "${CAPTURED_STDOUT}" in
+  *'up to date'*) ;;
+  *) die "match: missing up-to-date status; got >${CAPTURED_STDOUT}<" ;;
+esac
+
+# --- Case B: installed but a different version -> exit 1, suggest `nvm use` ---
+FAKE_CURRENT='v16.20.0'
+try nvm_rc_status
+[ "_${CAPTURED_EXIT_CODE}" = "_1" ] \
+  || die "mismatch: expected exit 1, got ${CAPTURED_EXIT_CODE}; out >${CAPTURED_STDOUT}<"
+case "${CAPTURED_STDOUT}" in
+  *'status:   mismatch: current is v16.20.0, .nvmrc wants v18.16.0'*) ;;
+  *) die "mismatch: wrong status line; got >${CAPTURED_STDOUT}<" ;;
+esac
+case "${CAPTURED_STDOUT}" in
+  *'run:      nvm use'*) ;;
+  *) die "mismatch: expected 'run:      nvm use'; got >${CAPTURED_STDOUT}<" ;;
+esac
+
+# --- Case C: requested version not installed -> exit 1, suggest `nvm install` ---
+printf '20\n' > .nvmrc
+FAKE_CURRENT='v18.16.0'
+try nvm_rc_status
+[ "_${CAPTURED_EXIT_CODE}" = "_1" ] \
+  || die "not-installed: expected exit 1, got ${CAPTURED_EXIT_CODE}; out >${CAPTURED_STDOUT}<"
+case "${CAPTURED_STDOUT}" in
+  *'run:      nvm install'*) ;;
+  *) die "not-installed: expected 'run:      nvm install'; got >${CAPTURED_STDOUT}<" ;;
+esac
+
+# --- Case D: no .nvmrc anywhere -> exit 3, "no .nvmrc found" ---
+rm -f .nvmrc
+try nvm_rc_status
+[ "_${CAPTURED_EXIT_CODE}" = "_3" ] \
+  || die "no-nvmrc: expected exit 3, got ${CAPTURED_EXIT_CODE}; out >${CAPTURED_STDOUT}<"
+case "${CAPTURED_STDOUT}" in
+  *'no .nvmrc found'*) ;;
+  *) die "no-nvmrc: expected 'no .nvmrc found'; got >${CAPTURED_STDOUT}<" ;;
+esac
+
+# --- Subcommand wiring: `nvm rc-status` invokes the helper ---
+printf '18\n' > .nvmrc
+FAKE_CURRENT='v18.16.0'
+try nvm rc-status
+[ "_${CAPTURED_EXIT_CODE}" = "_0" ] \
+  || die "subcommand: expected exit 0, got ${CAPTURED_EXIT_CODE}; out >${CAPTURED_STDOUT}<"
+case "${CAPTURED_STDOUT}" in
+  *'up to date'*) ;;
+  *) die "subcommand: missing up-to-date status; got >${CAPTURED_STDOUT}<" ;;
+esac
+
+cleanup

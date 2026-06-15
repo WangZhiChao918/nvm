@@ -1,0 +1,93 @@
+#!/bin/sh
+
+set -ex
+
+die () { echo "$@" ; cleanup ; exit 1; }
+cleanup () {
+  rm -f .nvmrc package.json
+  if [ -f .nvmrc.orig ]; then
+    mv .nvmrc.orig .nvmrc
+  fi
+  if [ -f package.json.orig ]; then
+    mv package.json.orig package.json
+  fi
+}
+
+\. ../../nvm.sh
+\. ../common.sh
+
+if [ -f .nvmrc ]; then mv .nvmrc .nvmrc.orig; fi
+if [ -f package.json ]; then mv package.json package.json.orig; fi
+
+# --- Test 1: nvm use falls back to package.json engines.node when no .nvmrc ---
+# The version won't be installed, but we verify the correct message is shown.
+rm -f .nvmrc
+cat > package.json <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+EOF
+
+set +ex
+OUTPUT="$(nvm use 2>&1)"
+EXIT_CODE=$?
+set -ex
+
+# Should mention engines.node in the output
+case "${OUTPUT}" in
+  *"engines.node"*) ;;
+  *) die "expected nvm use to mention engines.node, got: ${OUTPUT}" ;;
+esac
+
+# Should mention the extracted version
+case "${OUTPUT}" in
+  *"18.0.0"*) ;;
+  *) die "expected nvm use to mention version 18.0.0, got: ${OUTPUT}" ;;
+esac
+
+# --- Test 2: .nvmrc takes precedence over package.json ---
+printf '%s\n' "v99.99.99" > .nvmrc
+cat > package.json <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+EOF
+
+set +ex
+OUTPUT="$(nvm use 2>&1)"
+EXIT_CODE=$?
+set -ex
+
+# Should report .nvmrc, not engines.node
+case "${OUTPUT}" in
+  *".nvmrc"*) ;;
+  *) die "expected nvm use to mention .nvmrc when both exist, got: ${OUTPUT}" ;;
+esac
+
+# Should NOT mention engines.node
+case "${OUTPUT}" in
+  *"engines.node"*) die "nvm use should prefer .nvmrc over engines.node, got: ${OUTPUT}" ;;
+esac
+
+# --- Test 3: nvm use with no .nvmrc and no package.json still errors ---
+rm -f .nvmrc package.json
+
+set +ex
+OUTPUT="$(nvm use 2>&1)"
+EXIT_CODE=$?
+set -ex
+
+[ "${EXIT_CODE}" = "127" ] || die "expected exit code 127 with no .nvmrc and no package.json, got ${EXIT_CODE}"
+
+case "${OUTPUT}" in
+  *"No version provided and no .nvmrc file found"*) ;;
+  *) die "expected 'no .nvmrc file found' error, got: ${OUTPUT}" ;;
+esac
+
+cleanup

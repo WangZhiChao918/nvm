@@ -1,0 +1,222 @@
+#!/bin/sh
+
+die () { echo "$@" ; cleanup ; exit 1; }
+
+cleanup () {
+  rm -rf "${TEST_DIR}"
+}
+
+: nvm.sh
+\. ../../../nvm.sh
+
+set -e
+
+TEST_DIR="$(mktemp -d)"
+
+# --- Test: >=18.0.0 ---
+mkdir -p "${TEST_DIR}/gte"
+cat > "${TEST_DIR}/gte/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/gte" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_18.0.0" ] || die ">=18.0.0: expected '18.0.0', got '${ACTUAL}'"
+
+# --- Test: ^20.1.0 ---
+mkdir -p "${TEST_DIR}/caret"
+cat > "${TEST_DIR}/caret/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": "^20.1.0"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/caret" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_20.1.0" ] || die "^20.1.0: expected '20.1.0', got '${ACTUAL}'"
+
+# --- Test: ~18.12.0 ---
+mkdir -p "${TEST_DIR}/tilde"
+cat > "${TEST_DIR}/tilde/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": "~18.12.0"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/tilde" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_18.12.0" ] || die "~18.12.0: expected '18.12.0', got '${ACTUAL}'"
+
+# --- Test: >=16.0.0 <20.0.0 (range with upper bound) ---
+mkdir -p "${TEST_DIR}/range"
+cat > "${TEST_DIR}/range/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": ">=16.0.0 <20.0.0"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/range" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_16.0.0" ] || die ">=16.0.0 <20.0.0: expected '16.0.0', got '${ACTUAL}'"
+
+# --- Test: 18.x ---
+mkdir -p "${TEST_DIR}/x_wildcard"
+cat > "${TEST_DIR}/x_wildcard/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": "18.x"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/x_wildcard" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_18.0" ] || die "18.x: expected '18.0', got '${ACTUAL}'"
+
+# --- Test: >=18 ---
+mkdir -p "${TEST_DIR}/gte_major"
+cat > "${TEST_DIR}/gte_major/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": ">=18"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/gte_major" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_18" ] || die ">=18: expected '18', got '${ACTUAL}'"
+
+# --- Test: bare version 18 ---
+mkdir -p "${TEST_DIR}/bare"
+cat > "${TEST_DIR}/bare/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": "18"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/bare" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_18" ] || die "bare 18: expected '18', got '${ACTUAL}'"
+
+# --- Test: bare version 20.11.1 ---
+mkdir -p "${TEST_DIR}/bare_full"
+cat > "${TEST_DIR}/bare_full/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": "20.11.1"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/bare_full" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_20.11.1" ] || die "bare 20.11.1: expected '20.11.1', got '${ACTUAL}'"
+
+# --- Test: >=18.0.0 || >=20.0.0 (OR alternatives) ---
+mkdir -p "${TEST_DIR}/or"
+cat > "${TEST_DIR}/or/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": ">=18.0.0 || >=20.0.0"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/or" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_18.0.0" ] || die ">=18.0.0 || >=20.0.0: expected '18.0.0', got '${ACTUAL}'"
+
+# --- Test: * (wildcard - should return empty) ---
+mkdir -p "${TEST_DIR}/star"
+cat > "${TEST_DIR}/star/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": "*"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/star" && nvm_package_json_node_version)" && true
+[ -z "${ACTUAL}" ] || die "*: expected empty, got '${ACTUAL}'"
+
+# --- Test: lts/* (should return empty) ---
+mkdir -p "${TEST_DIR}/lts"
+cat > "${TEST_DIR}/lts/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": "lts/*"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/lts" && nvm_package_json_node_version)" && true
+[ -z "${ACTUAL}" ] || die "lts/*: expected empty, got '${ACTUAL}'"
+
+# --- Test: no engines field ---
+mkdir -p "${TEST_DIR}/no_engines"
+cat > "${TEST_DIR}/no_engines/package.json" <<EOF
+{
+  "name": "test",
+  "version": "1.0.0"
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/no_engines" && nvm_package_json_node_version)" && true
+[ -z "${ACTUAL}" ] || die "no engines: expected empty, got '${ACTUAL}'"
+
+# --- Test: engines without node ---
+mkdir -p "${TEST_DIR}/no_node"
+cat > "${TEST_DIR}/no_node/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "npm": ">=8.0.0"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/no_node" && nvm_package_json_node_version)" && true
+[ -z "${ACTUAL}" ] || die "engines without node: expected empty, got '${ACTUAL}'"
+
+# --- Test: no package.json ---
+mkdir -p "${TEST_DIR}/empty"
+ACTUAL="$(cd "${TEST_DIR}/empty" && nvm_package_json_node_version)" && true
+[ -z "${ACTUAL}" ] || die "no package.json: expected empty, got '${ACTUAL}'"
+
+# --- Test: single-line engines ---
+mkdir -p "${TEST_DIR}/single_line"
+cat > "${TEST_DIR}/single_line/package.json" <<EOF
+{"name":"test","engines":{"node":">=18.0.0"}}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/single_line" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_18.0.0" ] || die "single-line >=18.0.0: expected '18.0.0', got '${ACTUAL}'"
+
+# --- Test: <=20.0.0 ---
+mkdir -p "${TEST_DIR}/lte"
+cat > "${TEST_DIR}/lte/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": "<=20.0.0"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/lte" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_20.0.0" ] || die "<=20.0.0: expected '20.0.0', got '${ACTUAL}'"
+
+# --- Test: 18.x.x ---
+mkdir -p "${TEST_DIR}/xx"
+cat > "${TEST_DIR}/xx/package.json" <<EOF
+{
+  "name": "test",
+  "engines": {
+    "node": "18.x.x"
+  }
+}
+EOF
+ACTUAL="$(cd "${TEST_DIR}/xx" && nvm_package_json_node_version)"
+[ "_${ACTUAL}" = "_18.0.0" ] || die "18.x.x: expected '18.0.0', got '${ACTUAL}'"
+
+cleanup

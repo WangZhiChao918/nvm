@@ -512,6 +512,59 @@ nvm_find_project_dir() {
   nvm_echo "${path_}"
 }
 
+# Extract a nvm-compatible version string from the nearest package.json's engines.node field.
+# Returns the raw version (without 'v' prefix) or empty string if not found/parseable.
+nvm_package_json_node_version() {
+  local pkg_dir
+  pkg_dir="$(nvm_find_up 'package.json')"
+  if [ ! -f "${pkg_dir}/package.json" ]; then
+    return 1
+  fi
+
+  # Parse engines.node from package.json using awk state machine + sed cleanup.
+  # Step 1: awk extracts the raw engines.node value (handles multi-line JSON)
+  # Step 2: sed normalises semver range syntax into a bare version string
+  local engines_node
+  engines_node="$(command awk '
+    /"engines"[[:space:]]*:/ { in_engines=1 }
+    in_engines && /"node"[[:space:]]*:/ {
+      sub(/.*"node"[[:space:]]*:[[:space:]]*"/, "")
+      sub(/"[^"]*$/, "")
+      print
+      exit
+    }
+    in_engines && /^[[:space:]]*[}]/ { in_engines=0 }
+  ' "${pkg_dir}/package.json" 2>/dev/null)"
+
+  if [ -z "${engines_node}" ]; then
+    return 1
+  fi
+
+  # Normalise semver range to a bare version:
+  #   1. Take the first alternative if || is present
+  #   2. Convert .x/.X wildcards to .0
+  #   3. Strip range operators (>=, <=, >, <, ^, ~, =)
+  #   4. Strip leading whitespace
+  #   5. Take only the first version (strip anything after a space, e.g. "<20")
+  #   6. Discard bare wildcard (*)
+  #   7. Reject non-version strings (must start with a digit)
+  local version
+  version="$(nvm_echo "${engines_node}" | command sed \
+    -e 's/||.*//' \
+    -e 's/\.[xX]/\.0/g' \
+    -e 's/^[><=^~]*//' \
+    -e 's/^[[:space:]]*//' \
+    -e 's/[[:space:]].*//' \
+    -e 's/^\*$//' \
+    -e 's/^[^0-9].*$//')"
+
+  if [ -z "${version}" ]; then
+    return 1
+  fi
+
+  nvm_echo "${version}"
+}
+
 # Traverse up in directory tree to find containing folder
 nvm_find_up() {
   local path_
@@ -620,28 +673,41 @@ EOF
 nvm_rc_version() {
   local NVMRC_PATH
   NVMRC_PATH="$(nvm_find_nvmrc)"
-  if [ ! -e "${NVMRC_PATH}" ]; then
-    if [ "${NVM_SILENT:-0}" -ne 1 ]; then
-      nvm_err "No version provided and no .nvmrc file found"
+  if [ -e "${NVMRC_PATH}" ]; then
+    local NVM_RC_VERSION
+    if ! NVM_RC_VERSION="$(nvm_process_nvmrc "${NVMRC_PATH}")"; then
+      return 1
     fi
-    return 1
+
+    if [ -z "${NVM_RC_VERSION}" ]; then
+      if [ "${NVM_SILENT:-0}" -ne 1 ]; then
+        nvm_err "Warning: empty .nvmrc file found at \"${NVMRC_PATH}\""
+      fi
+      return 2
+    fi
+    if [ "${NVM_SILENT:-0}" -ne 1 ]; then
+      nvm_echo "Found '${NVMRC_PATH}' with version <${NVM_RC_VERSION}>"
+    fi
+    nvm_echo "${NVM_RC_VERSION}" >&3
+    return 0
   fi
 
-  local NVM_RC_VERSION
-  if ! NVM_RC_VERSION="$(nvm_process_nvmrc "${NVMRC_PATH}")"; then
-    return 1
+  # Fallback: try to infer version from package.json engines.node
+  local ENGINES_NODE_VERSION
+  if ENGINES_NODE_VERSION="$(nvm_package_json_node_version)" && [ -n "${ENGINES_NODE_VERSION}" ]; then
+    local PKG_JSON_PATH
+    PKG_JSON_PATH="$(nvm_find_up 'package.json')/package.json"
+    if [ "${NVM_SILENT:-0}" -ne 1 ]; then
+      nvm_echo "Found '${PKG_JSON_PATH}' with engines.node <${ENGINES_NODE_VERSION}>"
+    fi
+    nvm_echo "${ENGINES_NODE_VERSION}" >&3
+    return 0
   fi
 
-  if [ -z "${NVM_RC_VERSION}" ]; then
-    if [ "${NVM_SILENT:-0}" -ne 1 ]; then
-      nvm_err "Warning: empty .nvmrc file found at \"${NVMRC_PATH}\""
-    fi
-    return 2
-  fi
   if [ "${NVM_SILENT:-0}" -ne 1 ]; then
-    nvm_echo "Found '${NVMRC_PATH}' with version <${NVM_RC_VERSION}>"
+    nvm_err "No version provided and no .nvmrc file found"
   fi
-  nvm_echo "${NVM_RC_VERSION}" >&3
+  return 1
 }
 
 nvm_clang_version() {
@@ -3222,7 +3288,7 @@ nvm() {
         nvm_echo '  nvm --help                                  Show this message'
         nvm_echo '    --no-colors                               Suppress colored output'
         nvm_echo '  nvm --version                               Print out the installed version of nvm'
-        nvm_echo '  nvm install [<version>]                     Download and install a <version>. Uses .nvmrc if version is omitted; otherwise errors.'
+        nvm_echo '  nvm install [<version>]                     Download and install a <version>. Uses .nvmrc, or package.json engines.node, if version is omitted; otherwise errors.'
         nvm_echo '   The following optional arguments, if provided, must appear directly after `nvm install`:'
         nvm_echo '    -s                                        Skip binary download, install from source only.'
         nvm_echo '    -b                                        Skip source download, install from binary only.'
@@ -3239,18 +3305,18 @@ nvm() {
         nvm_echo '  nvm uninstall <version>                     Uninstall a version'
         nvm_echo '  nvm uninstall --lts                         Uninstall using automatic LTS (long-term support) alias `lts/*`, if available.'
         nvm_echo '  nvm uninstall --lts=<LTS name>              Uninstall using automatic alias for provided LTS line, if available.'
-        nvm_echo '  nvm use [current | <version>]               Modify PATH to use <version>. Uses .nvmrc if version is omitted; otherwise errors.'
+        nvm_echo '  nvm use [current | <version>]               Modify PATH to use <version>. Uses .nvmrc, or package.json engines.node, if version is omitted; otherwise errors.'
         nvm_echo '   The following optional arguments, if provided, must appear directly after `nvm use`:'
         nvm_echo '    --silent                                  Silences stdout/stderr output'
         nvm_echo '    --lts                                     Uses automatic LTS (long-term support) alias `lts/*`, if available.'
         nvm_echo '    --lts=<LTS name>                          Uses automatic alias for provided LTS line, if available.'
         nvm_echo '    --save                                    Writes the specified version to .nvmrc.'
-        nvm_echo '  nvm exec [current | <version>] [<command>]  Run <command> on <version>. Uses .nvmrc if version is omitted; otherwise errors.'
+        nvm_echo '  nvm exec [current | <version>] [<command>]  Run <command> on <version>. Uses .nvmrc, or package.json engines.node, if version is omitted; otherwise errors.'
         nvm_echo '   The following optional arguments, if provided, must appear directly after `nvm exec`:'
         nvm_echo '    --silent                                  Silences stdout/stderr output'
         nvm_echo '    --lts                                     Uses automatic LTS (long-term support) alias `lts/*`, if available.'
         nvm_echo '    --lts=<LTS name>                          Uses automatic alias for provided LTS line, if available.'
-        nvm_echo '  nvm run [current | <version>] [<args>]      Run `node` on <version> with <args> as arguments. Uses .nvmrc if version is omitted; otherwise errors.'
+        nvm_echo '  nvm run [current | <version>] [<args>]      Run `node` on <version> with <args> as arguments. Uses .nvmrc, or package.json engines.node, if version is omitted; otherwise errors.'
         nvm_echo '   The following optional arguments, if provided, must appear directly after `nvm run`:'
         nvm_echo '    --silent                                  Silences stdout/stderr output'
         nvm_echo '    --lts                                     Uses automatic LTS (long-term support) alias `lts/*`, if available.'
@@ -3276,7 +3342,7 @@ nvm() {
         nvm_echo '  nvm install-latest-npm                      Attempt to upgrade to the latest working `npm` on the current node version'
         nvm_echo '  nvm reinstall-packages <version>            Reinstall global `npm` packages contained in <version> to current version'
         nvm_echo '  nvm unload                                  Unload `nvm` from shell'
-        nvm_echo '  nvm which [current | <version>]             Display path to installed node version. Uses .nvmrc if version is omitted; otherwise errors.'
+        nvm_echo '  nvm which [current | <version>]             Display path to installed node version. Uses .nvmrc, or package.json engines.node, if version is omitted; otherwise errors.'
         nvm_echo '    --silent                                  Silences stdout/stderr output when a version is omitted'
         nvm_echo '  nvm cache dir                               Display path to the cache directory for nvm'
         nvm_echo '  nvm cache clear                             Empty cache directory for nvm'
@@ -4689,7 +4755,7 @@ nvm() {
         nvm_normalize_version nvm_is_valid_version nvm_normalize_lts \
         nvm_ensure_version_installed nvm_cache_dir nvm_ls_cached nvm_offline_version \
         nvm_version_path nvm_alias_path nvm_version_dir \
-        nvm_find_nvmrc nvm_find_up nvm_find_project_dir nvm_tree_contains_path \
+        nvm_find_nvmrc nvm_find_up nvm_find_project_dir nvm_package_json_node_version nvm_tree_contains_path \
         nvm_version_greater nvm_version_greater_than_or_equal_to \
         nvm_print_npm_version nvm_install_latest_npm nvm_npm_global_modules \
         nvm_has_system_node nvm_has_system_iojs \

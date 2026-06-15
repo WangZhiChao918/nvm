@@ -26,10 +26,10 @@ for EXPECTED in \
   esac
 done
 
-# The .nvmrc fallback is documented as conditional, not free.
+# The .nvmrc / engines.node fallback is documented as conditional, not free.
 case "${HELP}" in
-  *'Uses .nvmrc if version is omitted; otherwise errors.'*) ;;
-  *) die "nvm --help did not document the .nvmrc fallback caveat" ;;
+  *'Uses .nvmrc, or package.json engines.node, if version is omitted; otherwise errors.'*) ;;
+  *) die "nvm --help did not document the .nvmrc / engines.node fallback caveat" ;;
 esac
 
 # The stale, looser phrasing must be gone.

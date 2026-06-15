@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+# `nvm install --lts=<TAB>` should also complete LTS line names. This proves
+# the detection keys off `--lts=` regardless of the (install) subcommand.
+# Completion relies on bash arrays and `compgen`, so skip on other shells.
+[ -n "${BASH_VERSION:-}" ] || exit 0
+
+die () { echo "$@" ; exit 1 ; }
+
+export NVM_DIR="$(cd ../../.. && pwd)"
+: nvm.sh
+\. ../../../nvm.sh || die "could not source nvm.sh"
+\. ../../common.sh || die "could not source common.sh"
+
+WORK_DIR="$(mktemp -d)" || die "could not create temp dir"
+trap 'rm -rf "${WORK_DIR}"' EXIT
+export NVM_DIR="${WORK_DIR}"
+mkdir -p "${NVM_DIR}/alias/lts" || die "could not create lts alias dir"
+: > "${NVM_DIR}/alias/lts/fermium"
+: > "${NVM_DIR}/alias/lts/gallium"
+
+\. ../../../bash_completion || die "could not source bash_completion"
+
+in_reply () {
+  local needle="$1" e
+  for e in "${COMPREPLY[@]}"; do
+    [ "${e}" = "${needle}" ] && return 0
+  done
+  return 1
+}
+
+# words:  nvm install --lts = <value>
+# index:   0   1       2  3    4
+COMP_WORDS=(nvm install --lts = '')
+COMP_CWORD=4
+COMPREPLY=()
+__nvm
+
+in_reply fermium || die "expected 'fermium' in completions, got: ${COMPREPLY[*]}"
+in_reply gallium || die "expected 'gallium' in completions, got: ${COMPREPLY[*]}"
+
+exit 0

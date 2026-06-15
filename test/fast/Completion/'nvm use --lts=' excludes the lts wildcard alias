@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+# The literal `*` LTS alias (lts/*) must not be offered as an `--lts=` value,
+# since bare `--lts` already selects the latest LTS line.
+# Completion relies on bash arrays and `compgen`, so skip on other shells.
+[ -n "${BASH_VERSION:-}" ] || exit 0
+
+die () { echo "$@" ; exit 1 ; }
+
+export NVM_DIR="$(cd ../../.. && pwd)"
+: nvm.sh
+\. ../../../nvm.sh || die "could not source nvm.sh"
+\. ../../common.sh || die "could not source common.sh"
+
+WORK_DIR="$(mktemp -d)" || die "could not create temp dir"
+trap 'rm -rf "${WORK_DIR}"' EXIT
+export NVM_DIR="${WORK_DIR}"
+mkdir -p "${NVM_DIR}/alias/lts" || die "could not create lts alias dir"
+: > "${NVM_DIR}/alias/lts/argon"
+# A file literally named '*' mirrors the real lts/* alias. Filesystems that
+# forbid '*' in filenames (e.g. Windows/NTFS) can't exercise this case, so
+# skip rather than report a spurious failure.
+if ! (: > "${NVM_DIR}/alias/lts/*") 2>/dev/null; then
+  exit 0
+fi
+
+\. ../../../bash_completion || die "could not source bash_completion"
+
+in_reply () {
+  local needle="$1" e
+  for e in "${COMPREPLY[@]}"; do
+    [ "${e}" = "${needle}" ] && return 0
+  done
+  return 1
+}
+
+COMP_WORDS=(nvm use --lts = '')
+COMP_CWORD=4
+COMPREPLY=()
+__nvm
+
+in_reply argon || die "expected 'argon' in completions, got: ${COMPREPLY[*]}"
+in_reply '*'   && die "did not expect wildcard '*' in completions, got: ${COMPREPLY[*]}"
+
+exit 0

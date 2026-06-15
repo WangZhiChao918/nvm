@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+# Regression + reliability: `nvm alias <TAB>` lists custom aliases, nested LTS
+# aliases (e.g. lts/argon), and the built-in alias names. Completion relies on
+# bash arrays and `compgen`, so skip on other shells.
+[ -n "${BASH_VERSION:-}" ] || exit 0
+
+die () { echo "$@" ; exit 1 ; }
+
+export NVM_DIR="$(cd ../../.. && pwd)"
+: nvm.sh
+\. ../../../nvm.sh || die "could not source nvm.sh"
+\. ../../common.sh || die "could not source common.sh"
+
+WORK_DIR="$(mktemp -d)" || die "could not create temp dir"
+trap 'rm -rf "${WORK_DIR}"' EXIT
+export NVM_DIR="${WORK_DIR}"
+mkdir -p "${NVM_DIR}/alias/lts" || die "could not create alias dirs"
+echo 'v1.2.3' > "${NVM_DIR}/alias/default"
+echo 'v1.2.3' > "${NVM_DIR}/alias/work"
+echo 'v4.5.6' > "${NVM_DIR}/alias/lts/argon"
+
+\. ../../../bash_completion || die "could not source bash_completion"
+
+in_reply () {
+  local needle="$1" e
+  for e in "${COMPREPLY[@]}"; do
+    [ "${e}" = "${needle}" ] && return 0
+  done
+  return 1
+}
+
+COMP_WORDS=(nvm alias '')
+COMP_CWORD=2
+COMPREPLY=()
+__nvm
+
+in_reply default   || die "expected 'default' in completions, got: ${COMPREPLY[*]}"
+in_reply work      || die "expected 'work' in completions, got: ${COMPREPLY[*]}"
+in_reply lts/argon || die "expected nested 'lts/argon' in completions, got: ${COMPREPLY[*]}"
+in_reply node      || die "expected built-in 'node' in completions, got: ${COMPREPLY[*]}"
+in_reply stable    || die "expected built-in 'stable' in completions, got: ${COMPREPLY[*]}"
+
+exit 0

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+
+# `nvm use --lts=<TAB>` should complete the available LTS line names.
+# Completion relies on bash arrays and `compgen`, so skip on other shells.
+[ -n "${BASH_VERSION:-}" ] || exit 0
+
+die () { echo "$@" ; exit 1 ; }
+
+export NVM_DIR="$(cd ../../.. && pwd)"
+: nvm.sh
+\. ../../../nvm.sh || die "could not source nvm.sh"
+\. ../../common.sh || die "could not source common.sh"
+
+# Throwaway NVM_DIR so the assertions don't depend on the real alias dir.
+WORK_DIR="$(mktemp -d)" || die "could not create temp dir"
+trap 'rm -rf "${WORK_DIR}"' EXIT
+export NVM_DIR="${WORK_DIR}"
+mkdir -p "${NVM_DIR}/alias/lts" || die "could not create lts alias dir"
+: > "${NVM_DIR}/alias/lts/argon"
+: > "${NVM_DIR}/alias/lts/boron"
+: > "${NVM_DIR}/alias/lts/carbon"
+
+\. ../../../bash_completion || die "could not source bash_completion"
+
+in_reply () {
+  local needle="$1" e
+  for e in "${COMPREPLY[@]}"; do
+    [ "${e}" = "${needle}" ] && return 0
+  done
+  return 1
+}
+
+# Emulate bash splitting `nvm use --lts=<value>` on the `=` word-break:
+#   words:  nvm use --lts = <value>
+#   index:   0   1     2  3    4
+COMP_WORDS=(nvm use --lts = '')
+COMP_CWORD=4
+COMPREPLY=()
+__nvm
+
+in_reply argon  || die "expected 'argon' in completions, got: ${COMPREPLY[*]}"
+in_reply boron  || die "expected 'boron' in completions, got: ${COMPREPLY[*]}"
+in_reply carbon || die "expected 'carbon' in completions, got: ${COMPREPLY[*]}"
+
+# Prefix filtering: `--lts=ar<TAB>` should narrow to 'argon' only.
+COMP_WORDS=(nvm use --lts = ar)
+COMP_CWORD=4
+COMPREPLY=()
+__nvm
+
+in_reply argon || die "expected 'argon' for prefix 'ar', got: ${COMPREPLY[*]}"
+in_reply boron && die "did not expect 'boron' for prefix 'ar', got: ${COMPREPLY[*]}"
+
+exit 0

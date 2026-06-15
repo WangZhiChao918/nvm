@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+# Regression: `nvm use <TAB>` must still complete installed node versions and
+# alias names. Completion relies on bash arrays and `compgen`, so skip on
+# other shells.
+[ -n "${BASH_VERSION:-}" ] || exit 0
+
+die () { echo "$@" ; exit 1 ; }
+
+export NVM_DIR="$(cd ../../.. && pwd)"
+: nvm.sh
+\. ../../../nvm.sh || die "could not source nvm.sh"
+\. ../../common.sh || die "could not source common.sh"
+
+WORK_DIR="$(mktemp -d)" || die "could not create temp dir"
+trap 'rm -rf "${WORK_DIR}"' EXIT
+export NVM_DIR="${WORK_DIR}"
+mkdir -p "${NVM_DIR}/alias" || die "could not create alias dir"
+echo 'v0.10.42' > "${NVM_DIR}/alias/myalias"
+
+\. ../../../bash_completion || die "could not source bash_completion"
+
+# Stub nvm_ls so the assertion is deterministic and independent of any real
+# installed versions (and of platform-specific exec-bit handling). The glue
+# under test simply feeds `nvm_ls` output plus alias names into compgen;
+# nvm_ls itself is covered by the "Listing versions" suite.
+nvm_ls () { echo 'v0.10.42'; }
+
+in_reply () {
+  local needle="$1" e
+  for e in "${COMPREPLY[@]}"; do
+    [ "${e}" = "${needle}" ] && return 0
+  done
+  return 1
+}
+
+COMP_WORDS=(nvm use '')
+COMP_CWORD=2
+COMPREPLY=()
+__nvm
+
+in_reply v0.10.42 || die "expected installed 'v0.10.42' in completions, got: ${COMPREPLY[*]}"
+in_reply myalias  || die "expected alias 'myalias' in completions, got: ${COMPREPLY[*]}"
+
+exit 0

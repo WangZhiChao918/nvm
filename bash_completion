@@ -58,7 +58,10 @@ __nvm_aliases() {
   declare aliases
   aliases=""
   if [ -d "${NVM_DIR}/alias" ]; then
-    aliases="$(command cd "${NVM_DIR}/alias" && command find "${PWD}" -type f | command sed "s:${PWD}/::")"
+    # List alias files relative to the alias dir. Stripping a fixed "./"
+    # prefix (rather than interpolating ${PWD} into the sed pattern) keeps
+    # this correct even when NVM_DIR contains regex-special characters.
+    aliases="$(command cd "${NVM_DIR}/alias" && command find . -type f | command sed 's:^\./::')"
   fi
   echo "${aliases} node stable unstable iojs"
 }
@@ -67,9 +70,48 @@ __nvm_alias() {
   __nvm_generate_completion "$(__nvm_aliases)"
 }
 
+__nvm_lts_names() {
+  declare lts_dir
+  lts_dir="${NVM_DIR}/alias/lts"
+  [ -d "${lts_dir}" ] || return 0
+  # The LTS alias dir holds one file per LTS line (e.g. "argon", "boron")
+  # plus a literal "*" entry that points at the latest line. Bare "--lts"
+  # already selects "latest", so the wildcard is filtered out here.
+  command cd "${lts_dir}" \
+    && command find . -type f \
+    | command sed 's:^\./::' \
+    | command grep -v '^[*]$'
+}
+
+__nvm_lts() {
+  __nvm_generate_completion "$(__nvm_lts_names)"
+}
+
 __nvm() {
-  declare previous_word
+  declare previous_word current_word
   previous_word="${COMP_WORDS[COMP_CWORD - 1]}"
+  current_word="${COMP_WORDS[COMP_CWORD]}"
+
+  # `nvm use --lts=<TAB>` / `nvm install --lts=<TAB>`: bash treats `=` as a
+  # word-break, so `--lts=foo` arrives as the three words `--lts` `=` `foo`.
+  # When the word two positions back is `--lts`, complete LTS line names.
+  if [ "${COMP_CWORD}" -ge 2 ] \
+    && [ "${previous_word}" = '=' ] \
+    && [ "${COMP_WORDS[COMP_CWORD - 2]}" = '--lts' ]; then
+    __nvm_lts
+    return 0
+  fi
+
+  # Fallback for shells/configs where `=` is not a word-break character and
+  # the whole `--lts=value` arrives as a single word. The `-P` prefix keeps
+  # the `--lts=` part intact in the word bash substitutes back.
+  case "${current_word}" in
+    --lts=*)
+      # shellcheck disable=SC2207
+      COMPREPLY=($(compgen -P '--lts=' -W "$(__nvm_lts_names)" -- "${current_word#--lts=}"))
+      return 0
+      ;;
+  esac
 
   case "${previous_word}" in
     use | run | exec | ls | list | uninstall) __nvm_installed_nodes ;;

@@ -46,7 +46,34 @@ __nvm_commands() {
 }
 
 __nvm_options() {
-  OPTIONS=''
+  declare current_word
+  declare command
+  current_word="${COMP_WORDS[COMP_CWORD]}"
+
+  # Find the command (first non-option word after 'nvm')
+  command=""
+  for ((i=1; i < ${#COMP_WORDS[@]}-1; i++)); do
+    case "${COMP_WORDS[i]}" in
+      -*) ;;
+      *) command="${COMP_WORDS[i]}"; break ;;
+    esac
+  done
+
+  case "${command}" in
+    install | uninstall)
+      OPTIONS='--reinstall-packages-from= --no-progress --lts --lts= -s -b'
+      ;;
+    use | run | exec)
+      OPTIONS='--no-progress --lts --lts='
+      ;;
+    ls | list | ls-remote | list-remote)
+      OPTIONS='--lts --lts='
+      ;;
+    *)
+      OPTIONS=''
+      ;;
+  esac
+
   __nvm_generate_completion "${OPTIONS}"
 }
 
@@ -63,16 +90,82 @@ __nvm_aliases() {
   echo "${aliases} node stable unstable iojs"
 }
 
+__nvm_lts_aliases() {
+  declare lts_aliases
+  lts_aliases=""
+  if [ -d "${NVM_DIR}/alias/lts" ]; then
+    lts_aliases="$(command ls -1 "${NVM_DIR}/alias/lts" 2>/dev/null)"
+  fi
+  echo "${lts_aliases}"
+}
+
 __nvm_alias() {
   __nvm_generate_completion "$(__nvm_aliases)"
 }
 
+__nvm_handle_lts_option() {
+  declare current_word
+  current_word="${COMP_WORDS[COMP_CWORD]}"
+
+  # Check if current word starts with --lts=
+  case "${current_word}" in
+    --lts=*)
+      # Extract the part after --lts= for completion
+      declare lts_prefix
+      lts_prefix="${current_word#--lts=}"
+      declare lts_aliases
+      lts_aliases="$(__nvm_lts_aliases)"
+      # shellcheck disable=SC2207
+      COMPREPLY=($(compgen -W "${lts_aliases}" -- "${lts_prefix}"))
+      # Add the --lts= prefix back to each completion
+      declare i
+      for i in "${!COMPREPLY[@]}"; do
+        COMPREPLY[i]="--lts=${COMPREPLY[i]}"
+      done
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 __nvm() {
   declare previous_word
+  declare current_word
   previous_word="${COMP_WORDS[COMP_CWORD - 1]}"
+  current_word="${COMP_WORDS[COMP_CWORD]}"
+
+  # Handle --lts= completion for any command
+  case "${current_word}" in
+    --lts=*)
+      __nvm_handle_lts_option
+      return 0
+      ;;
+  esac
+
+  # Handle completion after --lts (without =)
+  case "${previous_word}" in
+    --lts)
+      # After --lts, suggest LTS aliases
+      __nvm_generate_completion "$(__nvm_lts_aliases)"
+      return 0
+      ;;
+  esac
 
   case "${previous_word}" in
-    use | run | exec | ls | list | uninstall) __nvm_installed_nodes ;;
+    use | run | exec | ls | list | uninstall)
+      # Check if we're completing an option
+      case "${current_word}" in
+        -*) __nvm_options ;;
+        *) __nvm_installed_nodes ;;
+      esac
+      ;;
+    install)
+      # Check if we're completing an option
+      case "${current_word}" in
+        -*) __nvm_options ;;
+        *) __nvm_installed_nodes ;;
+      esac
+      ;;
     alias | unalias) __nvm_alias ;;
     *) __nvm_commands ;;
   esac

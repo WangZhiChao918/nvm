@@ -1,0 +1,199 @@
+#!/bin/bash
+
+# Bash completion tests for nvm
+# Run this test from the test/fast directory:
+#   cd test/fast && bash bash_completion
+
+die () { echo "$@" ; exit 1; }
+
+export NVM_DIR="$(cd ../.. && pwd)"
+
+: nvm.sh
+\. ../../nvm.sh
+
+# Source the bash_completion file
+\. ../../bash_completion
+
+# Helper to simulate bash completion
+# Sets COMP_WORDS and COMP_CWORD, then calls __nvm
+simulate_completion() {
+  COMP_WORDS=("$@")
+  COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
+  __nvm
+}
+
+# Setup test environment
+setup_test_aliases() {
+  mkdir -p "${NVM_DIR}/alias"
+  mkdir -p "${NVM_DIR}/alias/lts"
+
+  # Create some custom aliases
+  echo "v18.0.0" > "${NVM_DIR}/alias/my-node"
+  echo "v20.0.0" > "${NVM_DIR}/alias/default"
+  echo "v16.0.0" > "${NVM_DIR}/alias/legacy"
+
+  # Create LTS aliases
+  echo "v18.17.0" > "${NVM_DIR}/alias/lts/hydrogen"
+  echo "v20.5.0" > "${NVM_DIR}/alias/lts/iron"
+  echo "v16.20.0" > "${NVM_DIR}/alias/lts/gallium"
+}
+
+cleanup_test_aliases() {
+  rm -rf "${NVM_DIR}/alias/my-node"
+  rm -rf "${NVM_DIR}/alias/default"
+  rm -rf "${NVM_DIR}/alias/legacy"
+  rm -rf "${NVM_DIR}/alias/lts"
+}
+
+# Test 1: Basic command completion still works
+test_basic_command_completion() {
+  simulate_completion "nvm" ""
+  echo "${COMPREPLY[@]}" | grep -q "install" || die "Test 1 failed: 'install' not in completion"
+  echo "${COMPREPLY[@]}" | grep -q "use" || die "Test 1 failed: 'use' not in completion"
+  echo "${COMPREPLY[@]}" | grep -q "ls" || die "Test 1 failed: 'ls' not in completion"
+  echo "Test 1 passed: Basic command completion works"
+}
+
+# Test 2: nvm use --lts= should complete LTS aliases
+test_use_lts_equals_completion() {
+  setup_test_aliases
+  simulate_completion "nvm" "use" "--lts="
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts=hydrogen" || die "Test 2 failed: '--lts=hydrogen' not in completion, got: ${COMPREPLY[*]}"
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts=iron" || die "Test 2 failed: '--lts=iron' not in completion, got: ${COMPREPLY[*]}"
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts=gallium" || die "Test 2 failed: '--lts=gallium' not in completion, got: ${COMPREPLY[*]}"
+  cleanup_test_aliases
+  echo "Test 2 passed: nvm use --lts= completes LTS aliases"
+}
+
+# Test 3: nvm install --lts= should complete LTS aliases
+test_install_lts_equals_completion() {
+  setup_test_aliases
+  simulate_completion "nvm" "install" "--lts="
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts=hydrogen" || die "Test 3 failed: '--lts=hydrogen' not in completion, got: ${COMPREPLY[*]}"
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts=iron" || die "Test 3 failed: '--lts=iron' not in completion, got: ${COMPREPLY[*]}"
+  cleanup_test_aliases
+  echo "Test 3 passed: nvm install --lts= completes LTS aliases"
+}
+
+# Test 4: nvm use --lts=hy should complete to --lts=hydrogen
+test_use_lts_partial_completion() {
+  setup_test_aliases
+  simulate_completion "nvm" "use" "--lts=hy"
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts=hydrogen" || die "Test 4 failed: '--lts=hydrogen' not in completion for '--lts=hy', got: ${COMPREPLY[*]}"
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts=iron" && die "Test 4 failed: '--lts=iron' should not match '--lts=hy'"
+  cleanup_test_aliases
+  echo "Test 4 passed: nvm use --lts=hy completes to --lts=hydrogen"
+}
+
+# Test 5: nvm use --lts (without =) should complete LTS aliases
+test_use_lts_space_completion() {
+  setup_test_aliases
+  simulate_completion "nvm" "use" "--lts" ""
+  echo "${COMPREPLY[@]}" | grep -q "hydrogen" || die "Test 5 failed: 'hydrogen' not in completion after '--lts', got: ${COMPREPLY[*]}"
+  echo "${COMPREPLY[@]}" | grep -q "iron" || die "Test 5 failed: 'iron' not in completion after '--lts', got: ${COMPREPLY[*]}"
+  cleanup_test_aliases
+  echo "Test 5 passed: nvm use --lts <TAB> completes LTS aliases"
+}
+
+# Test 6: Custom alias completion
+test_custom_alias_completion() {
+  setup_test_aliases
+  simulate_completion "nvm" "alias" ""
+  echo "${COMPREPLY[@]}" | grep -q "my-node" || die "Test 6 failed: 'my-node' not in alias completion, got: ${COMPREPLY[*]}"
+  echo "${COMPREPLY[@]}" | grep -q "legacy" || die "Test 6 failed: 'legacy' not in alias completion, got: ${COMPREPLY[*]}"
+  cleanup_test_aliases
+  echo "Test 6 passed: Custom alias completion works"
+}
+
+# Test 7: Option completion for install
+test_install_options() {
+  simulate_completion "nvm" "install" "-"
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts" || die "Test 7 failed: '--lts' not in install options, got: ${COMPREPLY[*]}"
+  echo "${COMPREPLY[@]}" | grep -q "\-\-reinstall-packages-from=" || die "Test 7 failed: '--reinstall-packages-from=' not in install options"
+  echo "Test 7 passed: nvm install - completes with options including --lts"
+}
+
+# Test 8: Option completion for use
+test_use_options() {
+  simulate_completion "nvm" "use" "-"
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts" || die "Test 8 failed: '--lts' not in use options, got: ${COMPREPLY[*]}"
+  echo "Test 8 passed: nvm use - completes with --lts option"
+}
+
+# Test 9: LTS aliases include lts/ prefix in __nvm_aliases
+test_lts_in_aliases() {
+  setup_test_aliases
+  ALIASES=$(__nvm_aliases)
+  echo "${ALIASES}" | grep -q "lts/hydrogen" || die "Test 9 failed: 'lts/hydrogen' not in __nvm_aliases output, got: ${ALIASES}"
+  echo "${ALIASES}" | grep -q "lts/iron" || die "Test 9 failed: 'lts/iron' not in __nvm_aliases output"
+  cleanup_test_aliases
+  echo "Test 9 passed: LTS aliases appear in __nvm_aliases with lts/ prefix"
+}
+
+# Test 10: __nvm_lts_aliases returns only LTS names
+test_lts_aliases_function() {
+  setup_test_aliases
+  LTS_ALIASES=$(__nvm_lts_aliases)
+  echo "${LTS_ALIASES}" | grep -q "hydrogen" || die "Test 10 failed: 'hydrogen' not in __nvm_lts_aliases output, got: ${LTS_ALIASES}"
+  echo "${LTS_ALIASES}" | grep -q "iron" || die "Test 10 failed: 'iron' not in __nvm_lts_aliases output"
+  echo "${LTS_ALIASES}" | grep -q "gallium" || die "Test 10 failed: 'gallium' not in __nvm_lts_aliases output"
+  # Should NOT include custom aliases
+  echo "${LTS_ALIASES}" | grep -q "my-node" && die "Test 10 failed: 'my-node' should not be in __nvm_lts_aliases"
+  cleanup_test_aliases
+  echo "Test 10 passed: __nvm_lts_aliases returns only LTS names"
+}
+
+# Test 11: nvm ls --lts= should complete LTS aliases
+test_ls_lts_completion() {
+  setup_test_aliases
+  simulate_completion "nvm" "ls" "--lts="
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts=hydrogen" || die "Test 11 failed: '--lts=hydrogen' not in ls completion, got: ${COMPREPLY[*]}"
+  cleanup_test_aliases
+  echo "Test 11 passed: nvm ls --lts= completes LTS aliases"
+}
+
+# Test 12: nvm uninstall --lts= should complete LTS aliases
+test_uninstall_lts_completion() {
+  setup_test_aliases
+  simulate_completion "nvm" "uninstall" "--lts="
+  echo "${COMPREPLY[@]}" | grep -q "\-\-lts=hydrogen" || die "Test 12 failed: '--lts=hydrogen' not in uninstall completion, got: ${COMPREPLY[*]}"
+  cleanup_test_aliases
+  echo "Test 12 passed: nvm uninstall --lts= completes LTS aliases"
+}
+
+# Test 13: Empty LTS directory doesn't break completion
+test_empty_lts_dir() {
+  mkdir -p "${NVM_DIR}/alias/lts"
+  simulate_completion "nvm" "use" "--lts="
+  # Should not crash, COMPREPLY may be empty
+  cleanup_test_aliases
+  echo "Test 13 passed: Empty LTS directory doesn't break completion"
+}
+
+# Test 14: No lts directory doesn't break completion
+test_no_lts_dir() {
+  rm -rf "${NVM_DIR}/alias/lts"
+  simulate_completion "nvm" "use" "--lts="
+  # Should not crash
+  echo "Test 14 passed: Missing LTS directory doesn't break completion"
+}
+
+# Run all tests
+echo "Running bash_completion tests..."
+test_basic_command_completion
+test_use_lts_equals_completion
+test_install_lts_equals_completion
+test_use_lts_partial_completion
+test_use_lts_space_completion
+test_custom_alias_completion
+test_install_options
+test_use_options
+test_lts_in_aliases
+test_lts_aliases_function
+test_ls_lts_completion
+test_uninstall_lts_completion
+test_empty_lts_dir
+test_no_lts_dir
+
+echo ""
+echo "All bash_completion tests passed!"

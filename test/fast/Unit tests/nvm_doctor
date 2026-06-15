@@ -1,0 +1,233 @@
+#!/bin/sh
+
+set -ex
+
+die () { echo "$@" ; cleanup ; exit 1; }
+
+OLDPATH="$PATH"
+WORK="$PWD/nvm_doctor-work.$$"
+TEST_BIN="$WORK/bin"
+
+cleanup() {
+  export PATH="$OLDPATH"
+  unset -f die cleanup
+  unset NVM_NODEJS_ORG_MIRROR NVM_IOJS_ORG_MIRROR
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY all_proxy ALL_PROXY
+  rm -rf "$WORK"
+}
+
+# Save the original nvm_has from nvm.sh, and a helper to restore it
+_restore_nvm_has() { nvm_has() { type "${1-}" >/dev/null 2>&1; }; }
+_disable_nvm_has() { nvm_has() { return 1; } }
+
+: nvm.sh
+\. ../../../nvm.sh
+
+\. ../../common.sh
+
+mkdir -p "$TEST_BIN"
+
+# ============================================================
+# Test 1: All healthy - curl available and mirrors reachable
+# ============================================================
+{
+  echo '#!/bin/sh'
+  echo 'exit 0'
+} > "$TEST_BIN/curl"
+chmod +x "$TEST_BIN/curl"
+
+export PATH="$TEST_BIN:$OLDPATH"
+unset NVM_NODEJS_ORG_MIRROR
+unset NVM_IOJS_ORG_MIRROR
+
+OUTPUT="$(set +x; nvm_doctor 2>&1)" || die 'Test 1 failed: nvm_doctor should succeed when mirrors are reachable'
+
+echo "$OUTPUT" | grep -q 'All checks passed' || die "Test 1 failed: expected 'All checks passed', got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'Node.js mirror (default): https://nodejs.org/dist' || die "Test 1 failed: expected default Node mirror, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'io.js mirror   (default): https://iojs.org/dist' || die "Test 1 failed: expected default iojs mirror, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'reachable' || die "Test 1 failed: expected 'reachable' in output, got: $OUTPUT"
+
+echo "Test 1 passed: all healthy"
+
+# ============================================================
+# Test 2: No curl/wget available
+# ============================================================
+_disable_nvm_has
+
+OUTPUT="$(set +x; nvm_doctor 2>&1)" && die 'Test 2 failed: nvm_doctor should fail when no download tool available' || true
+
+echo "$OUTPUT" | grep -q 'Neither curl nor wget' || die "Test 2 failed: expected 'Neither curl nor wget', got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'Please install curl or wget' || die "Test 2 failed: expected install advice, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'Skipping connectivity test' || die "Test 2 failed: expected 'Skipping connectivity test', got: $OUTPUT"
+
+_restore_nvm_has
+export PATH="$TEST_BIN:$OLDPATH"
+
+echo "Test 2 passed: no curl/wget"
+
+# ============================================================
+# Test 3: Mirror unreachable (curl fails)
+# ============================================================
+{
+  echo '#!/bin/sh'
+  echo 'exit 7'
+} > "$TEST_BIN/curl"
+chmod +x "$TEST_BIN/curl"
+
+export PATH="$TEST_BIN:$OLDPATH"
+unset NVM_NODEJS_ORG_MIRROR
+unset NVM_IOJS_ORG_MIRROR
+unset https_proxy HTTPS_PROXY http_proxy HTTP_PROXY no_proxy NO_PROXY all_proxy ALL_PROXY
+
+OUTPUT="$(set +x; nvm_doctor 2>&1)" && die 'Test 3 failed: nvm_doctor should fail when mirror unreachable' || true
+
+echo "$OUTPUT" | grep -q 'UNREACHABLE' || die "Test 3 failed: expected 'UNREACHABLE', got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'corporate network' || die "Test 3 failed: expected corporate network advice, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'NVM_NODEJS_ORG_MIRROR' || die "Test 3 failed: expected NVM_NODEJS_ORG_MIRROR advice, got: $OUTPUT"
+
+echo "Test 3 passed: mirror unreachable, no proxy"
+
+# ============================================================
+# Test 4: Mirror unreachable with proxy set
+# ============================================================
+{
+  echo '#!/bin/sh'
+  echo 'exit 7'
+} > "$TEST_BIN/curl"
+chmod +x "$TEST_BIN/curl"
+
+export PATH="$TEST_BIN:$OLDPATH"
+export HTTPS_PROXY='http://corp-proxy:8080'
+unset NVM_NODEJS_ORG_MIRROR
+unset NVM_IOJS_ORG_MIRROR
+
+OUTPUT="$(set +x; nvm_doctor 2>&1)" && die 'Test 4 failed: nvm_doctor should fail when mirror unreachable' || true
+
+echo "$OUTPUT" | grep -q 'UNREACHABLE' || die "Test 4 failed: expected 'UNREACHABLE', got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'proxy is configured' || die "Test 4 failed: expected proxy-related advice, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'corp-proxy:8080' || die "Test 4 failed: expected proxy value in output, got: $OUTPUT"
+
+unset HTTPS_PROXY
+
+echo "Test 4 passed: mirror unreachable with proxy set"
+
+# ============================================================
+# Test 5: Custom mirror displayed
+# ============================================================
+{
+  echo '#!/bin/sh'
+  echo 'exit 0'
+} > "$TEST_BIN/curl"
+chmod +x "$TEST_BIN/curl"
+
+export PATH="$TEST_BIN:$OLDPATH"
+NVM_NODEJS_ORG_MIRROR='https://npmmirror.com/mirrors/node'
+NVM_IOJS_ORG_MIRROR='https://npmmirror.com/mirrors/iojs'
+
+OUTPUT="$(set +x; nvm_doctor 2>&1)" || die 'Test 5 failed: nvm_doctor should succeed'
+
+echo "$OUTPUT" | grep -q 'custom (via \$NVM_NODEJS_ORG_MIRROR)' || die "Test 5 failed: expected custom label for node mirror, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'npmmirror.com/mirrors/node' || die "Test 5 failed: expected custom node mirror URL, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'npmmirror.com/mirrors/iojs' || die "Test 5 failed: expected custom iojs mirror URL, got: $OUTPUT"
+
+unset NVM_NODEJS_ORG_MIRROR NVM_IOJS_ORG_MIRROR
+
+echo "Test 5 passed: custom mirror"
+
+# ============================================================
+# Test 6: Proxy environment variables displayed
+# ============================================================
+{
+  echo '#!/bin/sh'
+  echo 'exit 0'
+} > "$TEST_BIN/curl"
+chmod +x "$TEST_BIN/curl"
+
+export PATH="$TEST_BIN:$OLDPATH"
+export http_proxy='http://proxy:3128'
+export no_proxy='localhost,127.0.0.1'
+
+OUTPUT="$(set +x; nvm_doctor 2>&1)" || die 'Test 6 failed: nvm_doctor should succeed'
+
+echo "$OUTPUT" | grep -q 'http_proxy}: http://proxy:3128' || die "Test 6 failed: expected http_proxy value, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'no_proxy}: localhost,127.0.0.1' || die "Test 6 failed: expected no_proxy value, got: $OUTPUT"
+echo "$OUTPUT" | grep -q '(unset)' || die "Test 6 failed: expected some '(unset)' proxy vars, got: $OUTPUT"
+
+unset http_proxy no_proxy
+
+echo "Test 6 passed: proxy env vars displayed"
+
+# ============================================================
+# Test 7: io.js mirror fails but Node mirror succeeds
+# ============================================================
+{
+  echo '#!/bin/sh'
+  # parse URL from args to decide
+  echo 'for arg in "$@"; do'
+  echo '  case "$arg" in'
+  echo '    *iojs.org*) exit 7 ;;'
+  echo '    *nodejs.org*) exit 0 ;;'
+  echo '  esac'
+  echo 'done'
+  echo 'exit 0'
+} > "$TEST_BIN/curl"
+chmod +x "$TEST_BIN/curl"
+
+export PATH="$TEST_BIN:$OLDPATH"
+unset NVM_NODEJS_ORG_MIRROR
+unset NVM_IOJS_ORG_MIRROR
+
+OUTPUT="$(set +x; nvm_doctor 2>&1)" && die 'Test 7 failed: nvm_doctor should fail when iojs mirror unreachable' || true
+
+echo "$OUTPUT" | grep -q 'Node.js mirror (default): https://nodejs.org/dist' || die "Test 7 failed: expected node mirror ok, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'io.js mirror.*UNREACHABLE' || die "Test 7 failed: expected iojs mirror UNREACHABLE, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'NVM_IOJS_ORG_MIRROR' || die "Test 7 failed: expected iojs mirror advice, got: $OUTPUT"
+
+echo "Test 7 passed: io.js mirror fails, node succeeds"
+
+# ============================================================
+# Test 8: wget fallback when curl is unavailable
+# ============================================================
+rm -f "$TEST_BIN/curl"
+
+{
+  echo '#!/bin/sh'
+  echo 'exit 0'
+} > "$TEST_BIN/wget"
+chmod +x "$TEST_BIN/wget"
+
+export PATH="$TEST_BIN:$OLDPATH"
+unset NVM_NODEJS_ORG_MIRROR
+unset NVM_IOJS_ORG_MIRROR
+
+OUTPUT="$(set +x; nvm_doctor 2>&1)" || die 'Test 8 failed: nvm_doctor should succeed with wget'
+
+echo "$OUTPUT" | grep -q 'wget:' || die "Test 8 failed: expected wget in output, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'reachable' || die "Test 8 failed: expected 'reachable' in output, got: $OUTPUT"
+echo "$OUTPUT" | grep -q 'All checks passed' || die "Test 8 failed: expected 'All checks passed', got: $OUTPUT"
+
+echo "Test 8 passed: wget fallback"
+
+# ============================================================
+# Test 9: Invalid mirror URL (e.g. NVM_NODEJS_ORG_MIRROR=bad)
+# ============================================================
+rm -f "$TEST_BIN/wget"
+{
+  echo '#!/bin/sh'
+  echo 'exit 0'
+} > "$TEST_BIN/curl"
+chmod +x "$TEST_BIN/curl"
+
+export PATH="$TEST_BIN:$OLDPATH"
+NVM_NODEJS_ORG_MIRROR='not a url'
+
+OUTPUT="$(set +x; nvm_doctor 2>&1)" || true
+
+echo "$OUTPUT" | grep -q 'Node.js mirror (custom.*): <invalid>' || die "Test 9 failed: expected invalid node mirror, got: $OUTPUT"
+
+unset NVM_NODEJS_ORG_MIRROR
+
+echo "Test 9 passed: invalid mirror URL"
+
+cleanup
+echo "All nvm_doctor tests passed."

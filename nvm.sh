@@ -3152,6 +3152,180 @@ nvm_offline_version() {
   return 3
 }
 
+nvm_doctor() {
+  local EXIT_CODE
+  EXIT_CODE=0
+
+  nvm_echo 'nvm doctor'
+  nvm_echo '=========='
+  nvm_echo
+
+  # --- 1. Download tool availability ---
+  nvm_echo 'Checking download tools...'
+  local HAS_CURL HAS_WGET
+  HAS_CURL=0
+  HAS_WGET=0
+  if nvm_has "curl"; then
+    HAS_CURL=1
+    nvm_echo "  curl: $(nvm_command_info curl)"
+  else
+    nvm_echo "  curl: not found"
+  fi
+  if nvm_has "wget"; then
+    HAS_WGET=1
+    nvm_echo "  wget: $(nvm_command_info wget)"
+  else
+    nvm_echo "  wget: not found"
+  fi
+  if [ "${HAS_CURL}" -eq 0 ] && [ "${HAS_WGET}" -eq 0 ]; then
+    nvm_echo
+    nvm_echo '  !! Neither curl nor wget is available.'
+    nvm_echo '  !! nvm requires at least one to download Node.js.'
+    nvm_echo '  !! Please install curl or wget and try again.'
+    EXIT_CODE=1
+  fi
+  nvm_echo
+
+  # --- 2. Proxy environment variables ---
+  nvm_echo 'Checking proxy environment variables...'
+  local PROXY_VAR PROXY_VAL
+  local ANY_PROXY_SET
+  ANY_PROXY_SET=0
+  for PROXY_VAR in http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY all_proxy ALL_PROXY; do
+    eval "PROXY_VAL=\"\${${PROXY_VAR}-}\""
+    if [ -n "${PROXY_VAL}" ]; then
+      nvm_echo "  \${${PROXY_VAR}}: ${PROXY_VAL}"
+      # Only forward-proxy vars count as "a proxy is configured"
+      case "${PROXY_VAR}" in
+        no_proxy | NO_PROXY) ;;
+        *) ANY_PROXY_SET=1 ;;
+      esac
+    else
+      nvm_echo "  \${${PROXY_VAR}}: (unset)"
+    fi
+  done
+  nvm_echo
+
+  # --- 3. Mirror URL resolution ---
+  nvm_echo 'Checking mirror URLs...'
+  local NODE_MIRROR IOJS_MIRROR
+  NODE_MIRROR="$(nvm_get_mirror node std 2>/dev/null)" || NODE_MIRROR=''
+  IOJS_MIRROR="$(nvm_get_mirror iojs std 2>/dev/null)" || IOJS_MIRROR=''
+
+  local NODE_MIRROR_SOURCE IOJS_MIRROR_SOURCE
+  if [ -n "${NVM_NODEJS_ORG_MIRROR-}" ]; then
+    NODE_MIRROR_SOURCE='custom (via $NVM_NODEJS_ORG_MIRROR)'
+  else
+    NODE_MIRROR_SOURCE='default'
+  fi
+  if [ -n "${NVM_IOJS_ORG_MIRROR-}" ]; then
+    IOJS_MIRROR_SOURCE='custom (via $NVM_IOJS_ORG_MIRROR)'
+  else
+    IOJS_MIRROR_SOURCE='default'
+  fi
+
+  nvm_echo "  Node.js mirror (${NODE_MIRROR_SOURCE}): ${NODE_MIRROR:-<invalid>}"
+  nvm_echo "  io.js mirror   (${IOJS_MIRROR_SOURCE}): ${IOJS_MIRROR:-<invalid>}"
+
+  if [ -z "${NODE_MIRROR}" ]; then
+    nvm_echo
+    nvm_echo '  !! The Node.js mirror URL is invalid.'
+    nvm_echo '  !! Check that $NVM_NODEJS_ORG_MIRROR contains a valid URL (e.g., https://nodejs.org/dist).'
+    EXIT_CODE=1
+  fi
+  if [ -z "${IOJS_MIRROR}" ]; then
+    nvm_echo
+    nvm_echo '  !! The io.js mirror URL is invalid.'
+    nvm_echo '  !! Check that $NVM_IOJS_ORG_MIRROR contains a valid URL (e.g., https://iojs.org/dist).'
+    EXIT_CODE=1
+  fi
+  nvm_echo
+
+  # --- 4. Mirror connectivity test ---
+  if [ "${HAS_CURL}" -eq 0 ] && [ "${HAS_WGET}" -eq 0 ]; then
+    nvm_echo 'Skipping connectivity test (no download tool available).'
+    nvm_echo
+  else
+    nvm_echo 'Testing mirror connectivity...'
+    local TIMEOUT_SEC
+    TIMEOUT_SEC="${1:-5}"
+
+    if [ -n "${NODE_MIRROR}" ]; then
+      local NODE_CHECK_URL
+      NODE_CHECK_URL="${NODE_MIRROR}/index.tab"
+      local NODE_CHECK_EXIT
+      NODE_CHECK_EXIT=0
+      if nvm_has "curl"; then
+        curl --max-time "${TIMEOUT_SEC}" -sS -o /dev/null -w "%{http_code}" "${NODE_CHECK_URL}" >/dev/null 2>&1 || NODE_CHECK_EXIT=$?
+      else
+        wget --timeout="${TIMEOUT_SEC}" -q -O /dev/null "${NODE_CHECK_URL}" >/dev/null 2>&1 || NODE_CHECK_EXIT=$?
+      fi
+      if [ "${NODE_CHECK_EXIT}" -eq 0 ]; then
+        nvm_echo "  Node.js mirror (${NODE_MIRROR}): reachable"
+      else
+        nvm_echo "  Node.js mirror (${NODE_MIRROR}): UNREACHABLE (exit code ${NODE_CHECK_EXIT})"
+        EXIT_CODE=1
+        if [ "${ANY_PROXY_SET}" -eq 0 ]; then
+          nvm_echo
+          nvm_echo '  !! The Node.js mirror is not reachable.'
+          nvm_echo '  !! If you are behind a corporate network, try setting $HTTPS_PROXY:'
+          nvm_echo '  !!   export HTTPS_PROXY=http://your-proxy:port'
+          nvm_echo '  !! Alternatively, set $NVM_NODEJS_ORG_MIRROR to a reachable mirror:'
+          nvm_echo '  !!   export NVM_NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node'
+        else
+          nvm_echo
+          nvm_echo '  !! The Node.js mirror is not reachable even though a proxy is configured.'
+          nvm_echo '  !! Verify that your proxy allows access to: '"${NODE_MIRROR}"
+          nvm_echo '  !! You may also try an alternative mirror:'
+          nvm_echo '  !!   export NVM_NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node'
+        fi
+      fi
+    fi
+
+    if [ -n "${IOJS_MIRROR}" ]; then
+      local IOJS_CHECK_URL
+      IOJS_CHECK_URL="${IOJS_MIRROR}/index.tab"
+      local IOJS_CHECK_EXIT
+      IOJS_CHECK_EXIT=0
+      if nvm_has "curl"; then
+        curl --max-time "${TIMEOUT_SEC}" -sS -o /dev/null -w "%{http_code}" "${IOJS_CHECK_URL}" >/dev/null 2>&1 || IOJS_CHECK_EXIT=$?
+      else
+        wget --timeout="${TIMEOUT_SEC}" -q -O /dev/null "${IOJS_CHECK_URL}" >/dev/null 2>&1 || IOJS_CHECK_EXIT=$?
+      fi
+      if [ "${IOJS_CHECK_EXIT}" -eq 0 ]; then
+        nvm_echo "  io.js mirror (${IOJS_MIRROR}): reachable"
+      else
+        nvm_echo "  io.js mirror (${IOJS_MIRROR}): UNREACHABLE (exit code ${IOJS_CHECK_EXIT})"
+        EXIT_CODE=1
+        if [ "${ANY_PROXY_SET}" -eq 0 ]; then
+          nvm_echo
+          nvm_echo '  !! The io.js mirror is not reachable.'
+          nvm_echo '  !! If you are behind a corporate network, try setting $HTTPS_PROXY:'
+          nvm_echo '  !!   export HTTPS_PROXY=http://your-proxy:port'
+          nvm_echo '  !! Alternatively, set $NVM_IOJS_ORG_MIRROR to a reachable mirror:'
+          nvm_echo '  !!   export NVM_IOJS_ORG_MIRROR=https://npmmirror.com/mirrors/iojs'
+        else
+          nvm_echo
+          nvm_echo '  !! The io.js mirror is not reachable even though a proxy is configured.'
+          nvm_echo '  !! Verify that your proxy allows access to: '"${IOJS_MIRROR}"
+          nvm_echo '  !! You may also try an alternative mirror:'
+          nvm_echo '  !!   export NVM_IOJS_ORG_MIRROR=https://npmmirror.com/mirrors/iojs'
+        fi
+      fi
+    fi
+    nvm_echo
+  fi
+
+  # --- 5. Summary ---
+  if [ "${EXIT_CODE}" -eq 0 ]; then
+    nvm_echo 'All checks passed.'
+  else
+    nvm_echo 'Some checks failed. See the advice above.'
+  fi
+
+  return "${EXIT_CODE}"
+}
+
 nvm() {
   if [ "$#" -lt 1 ]; then
     nvm --help
@@ -3280,6 +3454,7 @@ nvm() {
         nvm_echo '    --silent                                  Silences stdout/stderr output when a version is omitted'
         nvm_echo '  nvm cache dir                               Display path to the cache directory for nvm'
         nvm_echo '  nvm cache clear                             Empty cache directory for nvm'
+        nvm_echo '  nvm doctor                                  Diagnose mirror, proxy, and connectivity issues'
         nvm_echo '  nvm set-colors [<color codes>]              Set five text colors using format "yMeBg". Available when supported.'
         nvm_echo '                                               Initial colors are:'
         nvm_echo_with_colors "                                                  $(nvm_wrap_with_color_code 'b' 'b')$(nvm_wrap_with_color_code 'y' 'y')$(nvm_wrap_with_color_code 'g' 'g')$(nvm_wrap_with_color_code 'r' 'r')$(nvm_wrap_with_color_code 'e' 'e')"
@@ -3344,6 +3519,10 @@ nvm() {
           return 127
         ;;
       esac
+    ;;
+
+    "doctor")
+      nvm_doctor "$@"
     ;;
 
     "debug")
@@ -4675,6 +4854,7 @@ nvm() {
         nvm_ls_remote nvm_ls_remote_iojs nvm_ls_remote_index_tab \
         nvm_ls nvm_remote_version nvm_remote_versions \
         nvm_install_binary nvm_install_source nvm_clang_version \
+        nvm_doctor \
         nvm_get_mirror nvm_get_download_slug nvm_download_artifact \
         nvm_install_npm_if_needed nvm_use_if_needed nvm_check_file_permissions \
         nvm_print_versions nvm_compute_checksum \
